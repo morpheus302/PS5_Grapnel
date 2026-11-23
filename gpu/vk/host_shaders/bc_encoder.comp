@@ -1,0 +1,287 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// Compresses one level of an RGBA8 image (the ASTC decoder's output) to BC1 or BC3, one 4x4 block
+// per invocation, so re-compressed ASTC never round-trips through the CPU. Colour endpoints are
+// the block's bounding box, oriented along the colours' covariance and inset by 1/16; each texel
+// takes the nearest palette entry. Values are encoded as stored (sRGB data stays sRGB, like the
+// CPU path).
+
+#version 460 core
+
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout (set = 0, binding = 0, rgba8) uniform readonly image2DArray source;
+
+#ifdef BC_LEVELS
+// (hookshot-ps5 lot 61, bc_encoder_levels*_comp_spv.h: compiled with -DBC_LEVELS, and -DBC_LEVELS_DIRECT for the second) Every
+// level of a single-layer texture in one dispatch, BC3 only: a workgroup is an 8x8 tile of one level's blocks, the level's
+// texels are its rectangle of the scratch image (astc_decoder.comp's ASTC_LEVELS wrote them there), and its numbers are in the
+// decoder's table (4 uvec4 a level, gpu/vk/vk_texture.cpp's bc_one_pass):
+//   [2] the rectangle's origin x and y, the scratch layer, this encoder's first workgroup for the level;
+//   [3] the level's width and height in texels, its workgroups a row, its blocks' place in the output buffer (8-byte units).
+// BC_LEVELS_DIRECT: each block is stored straight into the level of the BC3 image, through a view of it as R32G32B32A32_UINT
+// (one texel a block), binding 3 + the level's index in the table; otherwise into the buffer, as one dispatch a level does.
+// The blocks are made by the same functions from the same texels as one dispatch a level: only main() differs.
+layout (std430, set = 0, binding = 2) readonly buffer LevelTable {
+    uvec4 level_table[];
+};
+
+#ifdef BC_LEVELS_DIRECT
+layout (set = 0, binding = 3, rgba32ui) uniform writeonly uimage2D level0;
+layout (set = 0, binding = 4, rgba32ui) uniform writeonly uimage2D level1;
+layout (set = 0, binding = 5, rgba32ui) uniform writeonly uimage2D level2;
+layout (set = 0, binding = 6, rgba32ui) uniform writeonly uimage2D level3;
+layout (set = 0, binding = 7, rgba32ui) uniform writeonly uimage2D level4;
+layout (set = 0, binding = 8, rgba32ui) uniform writeonly uimage2D level5;
+layout (set = 0, binding = 9, rgba32ui) uniform writeonly uimage2D level6;
+layout (set = 0, binding = 10, rgba32ui) uniform writeonly uimage2D level7;
+layout (set = 0, binding = 11, rgba32ui) uniform writeonly uimage2D level8;
+layout (set = 0, binding = 12, rgba32ui) uniform writeonly uimage2D level9;
+layout (set = 0, binding = 13, rgba32ui) uniform writeonly uimage2D level10;
+layout (set = 0, binding = 14, rgba32ui) uniform writeonly uimage2D level11;
+layout (set = 0, binding = 15, rgba32ui) uniform writeonly uimage2D level12;
+layout (set = 0, binding = 16, rgba32ui) uniform writeonly uimage2D level13;
+layout (set = 0, binding = 17, rgba32ui) uniform writeonly uimage2D level14;
+layout (set = 0, binding = 18, rgba32ui) uniform writeonly uimage2D level15;
+#else
+layout (std430, set = 0, binding = 1) writeonly buffer Output {
+    uvec2 blocks[];
+};
+#endif
+
+layout (push_constant) uniform PushConstants {
+    uint level_count;
+};
+#else
+layout (std430, set = 0, binding = 1) writeonly buffer Output {
+    uvec2 blocks[];
+};
+
+layout (push_constant) uniform PushConstants {
+    uint blocks_x;
+    uint blocks_y;
+    uint width;
+    uint height;
+    uint bc3;
+    uint out_offset; // in 8-byte units
+};
+#endif
+
+uint Pack565(vec3 color) {
+    const uvec3 q = uvec3(round(clamp(color, 0.0, 1.0) * vec3(31.0, 63.0, 31.0)));
+    return (q.r << 11) | (q.g << 5) | q.b;
+}
+
+vec3 Unpack565(uint value) {
+    const uvec3 q = uvec3((value >> 11) & 31u, (value >> 5) & 63u, value & 31u);
+    const uvec3 e = uvec3((q.r << 3) | (q.r >> 2), (q.g << 2) | (q.g >> 4), (q.b << 3) | (q.b >> 2));
+    return vec3(e) / 255.0;
+}
+
+float Distance2(vec3 a, vec3 b) {
+    const vec3 d = a - b;
+    return dot(d, d);
+}
+
+// BC1 colour block. With punch_through (BC1 only), texels with alpha < 0.5 use the transparent
+// index of the three-colour mode; otherwise the four-colour mode is used (BC3 always decodes so).
+uvec2 EncodeColor(in vec4 texels[16], bool punch_through) {
+    vec3 lo = vec3(1.0);
+    vec3 hi = vec3(0.0);
+    for (int i = 0; i < 16; ++i) {
+        if (punch_through && texels[i].a < 0.5) {
+            continue;
+        }
+        lo = min(lo, texels[i].rgb);
+        hi = max(hi, texels[i].rgb);
+    }
+    if (any(greaterThan(lo, hi))) {
+        // Every texel transparent: colour0 == colour1 selects three-colour mode, index 3.
+        return uvec2(0u, 0xFFFFFFFFu);
+    }
+    const vec3 center = (lo + hi) * 0.5;
+    const vec3 extent = hi - lo;
+    const int major = extent.g >= extent.r && extent.g >= extent.b ? 1 : (extent.r >= extent.b ? 0 : 2);
+    vec3 covariance = vec3(0.0);
+    for (int i = 0; i < 16; ++i) {
+        if (punch_through && texels[i].a < 0.5) {
+            continue;
+        }
+        const vec3 d = texels[i].rgb - center;
+        covariance += d * d[major];
+    }
+    vec3 e0 = hi;
+    vec3 e1 = lo;
+    for (int c = 0; c < 3; ++c) {
+        if (covariance[c] < 0.0) {
+            e0[c] = lo[c];
+            e1[c] = hi[c];
+        }
+    }
+    const vec3 inset = (e0 - e1) / 16.0;
+    e0 -= inset;
+    e1 += inset;
+
+    uint q0 = Pack565(e0);
+    uint q1 = Pack565(e1);
+    // Four-colour mode needs colour0 > colour1, three-colour mode colour0 <= colour1.
+    if (punch_through ? q0 > q1 : q0 < q1) {
+        const uint t = q0;
+        q0 = q1;
+        q1 = t;
+    }
+    if (!punch_through && q0 == q1) {
+        return uvec2(q0 | (q1 << 16), 0u);
+    }
+    vec3 palette[4];
+    palette[0] = Unpack565(q0);
+    palette[1] = Unpack565(q1);
+    if (punch_through) {
+        palette[2] = (palette[0] + palette[1]) * 0.5;
+        palette[3] = vec3(0.0);
+    } else {
+        palette[2] = (2.0 * palette[0] + palette[1]) / 3.0;
+        palette[3] = (palette[0] + 2.0 * palette[1]) / 3.0;
+    }
+    const int entries = punch_through ? 3 : 4;
+    uint indices = 0u;
+    for (int i = 0; i < 16; ++i) {
+        uint best = 0u;
+        if (punch_through && texels[i].a < 0.5) {
+            best = 3u;
+        } else {
+            float best_distance = Distance2(texels[i].rgb, palette[0]);
+            for (int p = 1; p < entries; ++p) {
+                const float distance = Distance2(texels[i].rgb, palette[p]);
+                if (distance < best_distance) {
+                    best_distance = distance;
+                    best = uint(p);
+                }
+            }
+        }
+        indices |= best << (2 * i);
+    }
+    return uvec2(q0 | (q1 << 16), indices);
+}
+
+// BC3 alpha block: eight-value mode (alpha0 > alpha1), indices 0 = alpha0, 1 = alpha1, 2..7 the
+// ramp from alpha0 to alpha1.
+uvec2 EncodeAlpha(in vec4 texels[16]) {
+    float lo = 1.0;
+    float hi = 0.0;
+    for (int i = 0; i < 16; ++i) {
+        lo = min(lo, texels[i].a);
+        hi = max(hi, texels[i].a);
+    }
+    const uint a0 = uint(round(hi * 255.0));
+    const uint a1 = uint(round(lo * 255.0));
+    uint bits_lo = a0 | (a1 << 8);
+    uint bits_hi = 0u;
+    if (a0 == a1) {
+        return uvec2(bits_lo, bits_hi);
+    }
+    for (uint i = 0u; i < 16u; ++i) {
+        const float t = (texels[i].a * 255.0 - float(a1)) / float(a0 - a1);
+        const uint q = uint(clamp(round(t * 7.0), 0.0, 7.0));
+        const uint index = q == 7u ? 0u : (q == 0u ? 1u : 8u - q);
+        const uint bit = 16u + 3u * i;
+        if (bit < 32u) {
+            bits_lo |= index << bit;
+            if (bit > 29u) {
+                bits_hi |= index >> (32u - bit);
+            }
+        } else {
+            bits_hi |= index << (bit - 32u);
+        }
+    }
+    return uvec2(bits_lo, bits_hi);
+}
+
+#ifdef BC_LEVELS
+void main() {
+    // (the workgroup's level: the last one whose first workgroup is at or before it)
+    const uint group = gl_WorkGroupID.x;
+    uint level = 0u;
+    for (uint i = 1u; i < level_count; i++) {
+        if (group >= level_table[i * 4u + 2u].w) {
+            level = i;
+        }
+    }
+    const uvec4 lv_rect = level_table[level * 4u + 2u];
+    const uvec4 lv_size = level_table[level * 4u + 3u];
+    const uint blocks_x = (lv_size.x + 3u) / 4u;
+    const uint blocks_y = (lv_size.y + 3u) / 4u;
+    const uint tile = group - lv_rect.w;
+    const uvec2 id = uvec2(tile % lv_size.z, tile / lv_size.z) * 8u + gl_LocalInvocationID.xy;
+    if (id.x >= blocks_x || id.y >= blocks_y) {
+        return;
+    }
+    vec4 texels[16];
+    const ivec2 base = ivec2(id) * 4;
+    const ivec2 last = ivec2(lv_size.xy) - 1;
+    const ivec2 origin = ivec2(lv_rect.xy);
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            // Edge blocks repeat the last row/column so padding doesn't widen the endpoints.
+            const ivec2 coord = min(base + ivec2(x, y), last);
+            texels[y * 4 + x] = imageLoad(source, ivec3(origin + coord, int(lv_rect.z)));
+        }
+    }
+    const uvec2 alpha = EncodeAlpha(texels);
+    const uvec2 color = EncodeColor(texels, false);
+#ifdef BC_LEVELS_DIRECT
+    // (a BC3 block's 16 bytes: the alpha block's 8, then the colour block's 8, as the buffer holds them)
+    const uvec4 bc = uvec4(alpha, color);
+    const ivec2 at = ivec2(id);
+    switch (level) {
+    case 0u: imageStore(level0, at, bc); break;
+    case 1u: imageStore(level1, at, bc); break;
+    case 2u: imageStore(level2, at, bc); break;
+    case 3u: imageStore(level3, at, bc); break;
+    case 4u: imageStore(level4, at, bc); break;
+    case 5u: imageStore(level5, at, bc); break;
+    case 6u: imageStore(level6, at, bc); break;
+    case 7u: imageStore(level7, at, bc); break;
+    case 8u: imageStore(level8, at, bc); break;
+    case 9u: imageStore(level9, at, bc); break;
+    case 10u: imageStore(level10, at, bc); break;
+    case 11u: imageStore(level11, at, bc); break;
+    case 12u: imageStore(level12, at, bc); break;
+    case 13u: imageStore(level13, at, bc); break;
+    case 14u: imageStore(level14, at, bc); break;
+    default: imageStore(level15, at, bc); break;
+    }
+#else
+    const uint block = id.y * blocks_x + id.x;
+    blocks[lv_size.w + block * 2u] = alpha;
+    blocks[lv_size.w + block * 2u + 1u] = color;
+#endif
+}
+#else
+void main() {
+    const uvec3 id = gl_GlobalInvocationID;
+    if (id.x >= blocks_x || id.y >= blocks_y) {
+        return;
+    }
+    vec4 texels[16];
+    const ivec2 base = ivec2(id.xy) * 4;
+    const ivec2 last = ivec2(width, height) - 1;
+    bool any_transparent = false;
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            // Edge blocks repeat the last row/column so padding doesn't widen the endpoints.
+            const ivec2 coord = min(base + ivec2(x, y), last);
+            texels[y * 4 + x] = imageLoad(source, ivec3(coord, int(id.z)));
+            any_transparent = any_transparent || texels[y * 4 + x].a < 0.5;
+        }
+    }
+    const uint block = (id.z * blocks_y + id.y) * blocks_x + id.x;
+    if (bc3 != 0u) {
+        blocks[out_offset + block * 2u] = EncodeAlpha(texels);
+        blocks[out_offset + block * 2u + 1u] = EncodeColor(texels, false);
+    } else {
+        blocks[out_offset + block] = EncodeColor(texels, any_transparent);
+    }
+}
+#endif

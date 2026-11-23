@@ -1,0 +1,48 @@
+Subject: [PATCH 2/7] ac/nir/ngg_mesh: a mesh shader that never sets its outputs emits nothing
+
+ac_nir_lower_ngg_mesh creates vertex_count_var and primitive_count_var
+without a value. Only OpSetMeshOutputsEXT stores them
+(lower_ms_set_vertex_and_primitive_count), but the finale loads them on
+every path, for GS_ALLOC_REQ and the exports. A mesh shader that returns before OpSetMeshOutputsEXT (an early
+return, or an OpUnreachable, which spirv_to_nir turns into a return) thus
+sends GS_ALLOC_REQ whatever its registers held.
+
+Hookshot's recompiled mesh shaders end each indirect-branch dispatch that
+matches no known target with OpUnreachable. Pipeline 67 of its pack reaches
+one of them with zero inputs: its GS_ALLOC_REQ went out with
+m0 = 0xffffe002 (about a million primitives, none exported) and the PS5 GPU
+waited for them until the device was lost.
+
+Both counts are now 0 at the shader's start, before the API shader is
+wrapped, so a shader that always sets its outputs keeps its code (the
+store is dead there): the 24 synthetic repro binaries are bit-identical.
+Pipeline 67's original module now compiles to the binary of the variant
+whose OpUnreachable blocks were replaced by OpSetMeshOutputsEXT(0, 0) and
+OpReturn (Hash 2213704083, Code_size 423876), which the console drew with
+no hang (draw ok, 169 us of GPU, nothing covered).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+---
+ src/amd/common/nir/ac_nir_lower_ngg_mesh.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/amd/common/nir/ac_nir_lower_ngg_mesh.c b/src/amd/common/nir/ac_nir_lower_ngg_mesh.c
+index 5733b07ad651ec125243f5c2b24bd9af47e070e9..36616d6e132f9d6857ca7b2424ee3df424530dff 100644
+--- a/src/amd/common/nir/ac_nir_lower_ngg_mesh.c
++++ b/src/amd/common/nir/ac_nir_lower_ngg_mesh.c
+@@ -1856,6 +1856,14 @@ ac_nir_lower_ngg_mesh(nir_shader *shader, const ac_nir_lower_ngg_options *option
+    nir_builder builder = nir_builder_at(nir_before_impl(impl));
+    nir_builder *b = &builder; /* This is to avoid the & */
+ 
++   /* A mesh shader that ends without executing OpSetMeshOutputsEXT (an early return, or OpUnreachable, which
++    * spirv_to_nir turns into a return) emits nothing. Without this the counts are undefined on that path, and
++    * GS_ALLOC_REQ gets whatever the registers hold: the GPU then waits for primitives that are never exported.
++    * (Stored before the API shader is wrapped below, so that it is dead code in a shader that always sets its
++    * outputs.) */
++   nir_store_var(b, state.vertex_count_var, nir_imm_int(b, 0), 0x1);
++   nir_store_var(b, state.primitive_count_var, nir_imm_int(b, 0), 0x1);
++
+    handle_smaller_ms_api_workgroup(b, &state);
+    if (!fast_launch_2)
+       ms_emit_legacy_workgroup_index(b, &state);

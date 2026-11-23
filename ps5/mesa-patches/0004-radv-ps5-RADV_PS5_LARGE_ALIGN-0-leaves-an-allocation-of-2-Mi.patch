@@ -1,0 +1,127 @@
+Subject: [PATCH 4/7] radv/ps5: RADV_PS5_LARGE_ALIGN=0 leaves an allocation of 2 MiB or more unaligned to 2 MiB (an experiment)
+
+A title whose render targets are made and destroyed every frame stopped the GPU within half a minute
+once they were 2 MiB and more (the 3D at 75% and 100%), and ran with the same targets under 2 MiB (50%).
+The one thing radv_ps5_memory_alloc does differently from 2 MiB on is the alignment of the direct memory.
+The submissions' line on stderr says the setting, the allocations of 2 MiB or more made, and how many
+of them got direct memory that starts on a 2 MiB boundary. Unset: nothing changes.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+
+---
+ src/amd/vulkan/winsys/ps5/radv_ps5_cs.c       |  7 +++--
+ src/amd/vulkan/winsys/ps5/radv_ps5_platform.c | 44 ++++++++++++++++++++++++++-
+ src/amd/vulkan/winsys/ps5/radv_ps5_platform.h |  4 +++
+ 3 files changed, 52 insertions(+), 3 deletions(-)
+
+diff --git a/src/amd/vulkan/winsys/ps5/radv_ps5_cs.c b/src/amd/vulkan/winsys/ps5/radv_ps5_cs.c
+index 3251c09c6641341ff914113321af446cfb8496c2..03b9b875f34c58c9308cc5902a018a65080604d5 100644
+--- a/src/amd/vulkan/winsys/ps5/radv_ps5_cs.c
++++ b/src/amd/vulkan/winsys/ps5/radv_ps5_cs.c
+@@ -521,11 +521,14 @@ radv_ps5_note_submission(uint32_t words, uint64_t claim_ns, uint64_t copy_ns)
+       return;
+    uint64_t times[3];
+    radv_ps5_submit_times(times);
++   uint32_t large[3];
++   radv_ps5_large_stats(large);
+    fprintf(stderr,
+            "radv/ps5 submissions: window count=%" PRIu64 " kwords=%" PRIu64 " claim_ms=%.1f copy_ms=%.1f flush_ms=%.1f"
+-           " agc_ms=%.1f suspend_ms=%.1f\n",
++           " agc_ms=%.1f suspend_ms=%.1f large_align=%u large=%u at_2m=%u\n",
+            radv_ps5_submit_window.count, radv_ps5_submit_window.words / 1024, radv_ps5_submit_window.claim_ns / 1e6,
+-           radv_ps5_submit_window.copy_ns / 1e6, times[0] / 1e6, times[1] / 1e6, times[2] / 1e6);
++           radv_ps5_submit_window.copy_ns / 1e6, times[0] / 1e6, times[1] / 1e6, times[2] / 1e6, large[0], large[1],
++           large[2]);
+    memset(&radv_ps5_submit_window, 0, sizeof(radv_ps5_submit_window));
+    radv_ps5_submit_window.window_start = now;
+ }
+diff --git a/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c b/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c
+index 1e56791ab39bb9da7f623f4bbeaa0657dc99fb8b..b8335d7ae6935e187ed8d5ae1577982d1dcce725 100644
+--- a/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c
++++ b/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c
+@@ -288,13 +288,43 @@ radv_ps5_memory_available_bytes(void)
+ 
+ static bool radv_ps5_memory_alloc_chunked(uint64_t bytes, uint64_t alignment, struct radv_ps5_memory *out);
+ 
++/* RADV_PS5_LARGE_ALIGN=0, an experiment: an allocation of 2 MiB or more keeps
++ * the alignment it was asked with, as a smaller one does, so its direct memory
++ * need not start on a 2 MiB boundary. A title whose render targets are made
++ * and destroyed every frame stopped the GPU within half a minute once they
++ * were 2 MiB and more, and ran with the same targets under 2 MiB. Unset or 1:
++ * 2 MiB alignment, as ever. [0]: the setting; [1]: allocations of 2 MiB or
++ * more made; [2]: of those, the ones whose direct memory starts on a 2 MiB
++ * boundary. */
++static uint32_t radv_ps5_large_counts[3] = {UINT32_MAX, 0, 0};
++
++static bool
++radv_ps5_large_align(void)
++{
++   uint32_t on = p_atomic_read(&radv_ps5_large_counts[0]);
++   if (on == UINT32_MAX) {
++      const char *const setting = getenv("RADV_PS5_LARGE_ALIGN");
++      on = !setting || atoi(setting) != 0;
++      p_atomic_set(&radv_ps5_large_counts[0], on);
++   }
++   return on != 0;
++}
++
++void
++radv_ps5_large_stats(uint32_t stats[3])
++{
++   stats[0] = radv_ps5_large_align();
++   stats[1] = p_atomic_read(&radv_ps5_large_counts[1]);
++   stats[2] = p_atomic_read(&radv_ps5_large_counts[2]);
++}
++
+ bool
+ radv_ps5_memory_alloc(uint64_t bytes, uint64_t alignment, bool window32, struct radv_ps5_memory *out)
+ {
+    *out = (struct radv_ps5_memory){.physical = -1};
+    bytes = align64(MAX2(bytes, 1), RADV_PS5_PAGE_BYTES);
+    alignment = MAX2(alignment, PS5_KERNEL_DIRECT_ALIGNMENT);
+-   if (bytes >= RADV_PS5_LARGE_BYTES)
++   if (bytes >= RADV_PS5_LARGE_BYTES && radv_ps5_large_align())
+       alignment = MAX2(alignment, RADV_PS5_LARGE_BYTES);
+    alignment = util_next_power_of_two64(alignment);
+ 
+@@ -343,6 +373,11 @@ radv_ps5_memory_alloc(uint64_t bytes, uint64_t alignment, bool window32, struct
+       return false;
+    }
+ 
++   if (bytes >= RADV_PS5_LARGE_BYTES) {
++      p_atomic_inc(&radv_ps5_large_counts[1]);
++      if (!((uint64_t)physical & (RADV_PS5_LARGE_BYTES - 1)))
++         p_atomic_inc(&radv_ps5_large_counts[2]);
++   }
+    *out = (struct radv_ps5_memory){
+       .cpu = address,
+       .bytes = bytes,
+@@ -962,6 +997,13 @@ radv_ps5_platform_runs_gpu(void)
+    return false;
+ }
+ 
++void
++radv_ps5_large_stats(uint32_t stats[3])
++{
++   stats[0] = 1;
++   stats[1] = stats[2] = 0;
++}
++
+ uint64_t
+ radv_ps5_memory_pool_bytes(void)
+ {
+diff --git a/src/amd/vulkan/winsys/ps5/radv_ps5_platform.h b/src/amd/vulkan/winsys/ps5/radv_ps5_platform.h
+index 70b718ec91f53f4336f2c488aee09973c3e602fc..f083b795f28cad3b8938d1c2da8bf7c313671050 100644
+--- a/src/amd/vulkan/winsys/ps5/radv_ps5_platform.h
++++ b/src/amd/vulkan/winsys/ps5/radv_ps5_platform.h
+@@ -119,6 +119,10 @@ int radv_ps5_submit(uint32_t *words, uint32_t count, volatile uint32_t *marker,
+  * flush, in sceAgcDriverSubmitDcb and in sceAgcSuspendPoint (called with the
+  * submit lock held, as radv_ps5_submit is). */
+ void radv_ps5_submit_times(uint64_t times[3]);
++/* RADV_PS5_LARGE_ALIGN (radv_ps5_memory_alloc): whether allocations of 2 MiB
++ * or more are aligned to 2 MiB, how many were made, and how many of them got
++ * direct memory that starts on a 2 MiB boundary. */
++void radv_ps5_large_stats(uint32_t stats[3]);
+ /* The tessellation factor ring the GPU uses from the next submission on (AGC
+  * owns its registers); 0 or the system software's error. */
+ int radv_ps5_set_tess_factor_ring(uint64_t va, uint32_t size);

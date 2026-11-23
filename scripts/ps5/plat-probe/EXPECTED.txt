@@ -1,0 +1,143 @@
+Hookshot Platform Probe (PPSA99147): how to run it, and what each line should say
+===================================================================================
+
+What it is: the PS5 platform layer of branch ps5-plat (host/posix ps5_window.c, ps5_platform.c, ps5_files.c,
+ps5_broker_client.c, hos_sdl_ps5.c, win32_posix.c; host/ mkw_glue.c, pad_sdl.c and nup_fs.c; a64-kit's runtime), linked
+with PS5_Vulkan's stock RADV, run check by check. Built by scripts/ps5/build-plat-probe.sh. No game code; the nup check's
+list (nup-hashes.txt: names, sizes and SHA-256 of game files) is game-derived: this folder stays private.
+
+Run it
+------
+1. The console needs the ELF loader listening on 127.0.0.1:9021 (the jailbreak's elfldr, as for any payload) for
+   the broker check; everything else runs without it. ShadowMountPlus registers the title (1.7beta3 or later also
+   mounts /data into its sandbox).
+2. Upload the folder PPSA99147 to /data/homebrew/PPSA99147/ (ps5upload), let ShadowMountPlus register it. For the nup
+   check, /data/hookshot/game.nup must be there (the game's package, uploaded as one file).
+3. Optionally edit /data/homebrew/PPSA99147/plat-probe.ini (sizes, which checks; see the comments in it).
+4. Launch "Hookshot Platform Probe" with the controller in hand. About 5-10 s in, the controller RUMBLES: press
+   buttons and move the sticks for 10 s until it rumbles again; a 1 s 440 Hz tone follows from the TV.
+   The screen stays dark (no video in this title).
+5. It ends by itself through the shell (2 to 5 minutes; the 2 GiB writes take most of it). Collect:
+   - /data/homebrew/PPSA99147/plat-probe.txt (every line, written as it happens);
+   - klog: lines "[plat-probe] ...", "[hookshot] ps5: ..." (the platform's own), "hookshot-broker: ..." (the payload).
+6. Left behind: plat-probe.txt, /data/hookshot/ (an empty probe/ folder and .hookshot-broker-token), the broker
+   (still running, port 9147, until the console restarts), and the token copy in the title folder.
+   The probe removes its own test files.
+
+Reading the file
+----------------
+BEGIN <check>, then PASS/FAIL/INFO/STEP lines, VERDICT lines where a design choice hangs on the answer, and at the
+end "SUMMARY pass=.. fail=.. info=..; failed: ..." and "END plat-probe". A line "TIMEOUT <check>" means the
+watchdog ended the title because that check stopped making progress (a hang reported, not waited on): that check's
+last progress text says where. No END line and no TIMEOUT: the title crashed; the last BEGIN names the check.
+
+The checks, in order, what they should say, and what would change the design
+-----------------------------------------------------------------------------
+window (always first, before anything else reserves address space)
+  The first console run of the boot test (PPSA99145) had one 512 GiB reservation at 0x80_0000_0000 refused.
+  MAP lines: every mapping from 0 to 1 TiB; "free (as far as the map shows)" lines.
+  window.a: MAP_FIXED at 0x80_0000_0000 for 512, 256, 128, 64 GiB (skipped where the map shows something).
+  window.b: 512, 496, 256 GiB at the hint and with no address: granted, placed where, or refused (code).
+  window.slots: 16 GiB at each 16 GiB from 64 GiB to 1 TiB: '+' granted at the slot, '>' placed higher, '-' refused.
+  window.top: where the title's address space ends (64 KiB bisection).
+  window.c: the guest layout's parts at base + guest for the bases 0x80_0000_0000, 0x7C_0000_0000 and 0 (identity,
+    as Savage Wind), each part granted or refused, and flagged when it falls in RADV's device-memory range
+    [0x40_0000_0000, 0x80_0000_0000).
+  window.cand: 512 GiB at 0x7C_0000_0000; 496 GiB at 0x80_0000_0000.
+  Then the runtime's own reservation (ps5_window.c, as hos_main.c makes it): one reservation, else 32 pieces of
+  16 GiB, else the pieces granted from the base up when they reach 336 GiB (the guest then told a shorter address
+  space: HOS_SPACE_END = where they end).
+  EXPECTED (hypothesis from the PS4's map, whose application area ends at 0xFC_0000_0000, and EglantinePS5's 256 GiB
+  window at 0xA0_0000_0000): window.top near 0xFC_0000_0000; the last slot (0xF0_0000_0000) '-'; 512 GiB at
+  0x7C_0000_0000 GRANTED; 496 GiB at 0x80_0000_0000 GRANTED; the runtime's window "the pieces granted from the base
+  up", 496 GiB, the guest's space ending at 496 GiB (PASS window with VERDICT plan C': the runtime runs; the clean
+  fix is a base change).
+  DESIGN CHANGE if: window.top is near 0xFC_0000_0000 -> move A64_HOST_BASE to 0x7C_0000_0000
+    (nx2/toolchain_ps5.py GUEST_BASE, one constant, every object rebuilt) so that 512 GiB fit and the guest layout is
+    the PC's; until then the prefix fallback runs with 496 GiB. If the slots show refusals in the middle, or the
+    largest grant at 0x80_0000_0000 is small (window.a), the window must be split around them (plan B) or moved
+    (window.c's usable base).
+
+bss: flexible memory at main and around touching the 128 MiB a64_dirty table (.bss).
+  The boot test saw 268 MB of flexible memory free (403 MiB is usual at a title's start): EXPECTED about 128 MiB less
+  than a title without the table, charged at load (no drop when touched), or a 128 MiB drop when touched.
+  DESIGN CHANGE if it is charged either way (VERDICT says): the table moves out of .bss (16 KiB marks: 32 MiB; or a
+  direct-memory table at a fixed address).
+
+futex: WaitOnAddress times out after ~50 ms, is woken by another thread, a condition variable times out after
+  ~30 ms; then the same on the fallback (condition variables by address). EXPECTED: PASS both, mode _umtx_op.
+  DESIGN CHANGE if mode says "condition variables": _umtx_op is refused to a title; every lock runs on the fallback.
+
+sched (probe_sched.c; 2026-11-09, after the game's first run crawled: about 20 s; tests=sched runs it alone)
+  sched.policy: the main thread's policy and priority, its CPUs and the CPU it is on, the title's CPUs (0x1fff), the
+    process's CPU sets (cpuset_getaffinity: which, root), and HOOKSHOT_PS5_SCHED's note with the policies' ranges.
+  sched.clock: 20 ms spun, the thread's CPU clock counts ~20 ms. EXPECTED: PASS (the game's report needs it).
+  sched.slice.console / .rr / .other: thread A spins up to 300 ms on the title's last CPU, B of the same priority moves
+    onto it. "B ran only once A stopped" = no time slice on that policy; "while A spun" = a slice of that length.
+  VERDICT sched.slice: EXPECTED (EglantinePS5: "threads of one priority are not time-sliced here"): none on the
+    console's policy (fifo), a slice on rr: "HOOKSHOT_PS5_SCHED=auto (FIFO made RR) is the fix".
+  sched.vcores.alone / .busy / .busy-rr / .busy-other: 24 threads on 6 virtual cores as host/hos_thread.c runs the
+    game's (1 ms waiting steps, a yield asked after 2 ms, a granted core taken over after 2 ms, an escape after 250 ms),
+    alone, then beside 11 threads that spin without yielding for the round, on the console's policy, rr, other.
+    EXPECTED: alone: waits of a few ms, work near 100% of 6 cores x 3 s; busy (the game's case on fifo): waits and
+    "without progress" in hundreds of ms to seconds, escapes, little work; busy-rr and busy-other: bounded by the
+    slice. DESIGN CHANGE if busy-rr stays as bad as busy: rr does not slice here; try HOOKSHOT_PS5_SCHED=other in
+    hookshot_env.txt, or HOOKSHOT_PS5_AFFINITY=pinned.
+
+pad: "N controller(s) through scePad", then an INFO pad line with what scePad said (reads, latest states, samples, the
+  "not connected" and the shell's ones, read errors, pad_sdl.c's opens and closes), and INFO pad.flaps at the end of the
+  run: 0 closes and 0 "disconnected" lines expected, held or not (run 3, unattended, had 46 before the handles were kept
+  and presence given a 2 s grace), PAD lines for each press with the HOS_PAD name and the Switch button
+  nn_hid.c's default binding gives it (cross -> B, circle -> A, square -> Y, triangle -> X, L2/R2 -> ZL/ZR,
+  OPTIONS -> PLUS, touch pad -> MINUS), stick lines past half. Two rumbles. EXPECTED: PASS pad (1 controller).
+tone: 10 blocks of 100 ms through waveOut played, >= 187 grains to sceAudioOutOutput, a tone heard. EXPECTED: PASS.
+
+eager: hos_commit of 64 KiB, 1 MiB, 16 MiB, 256 MiB committed, zero, read back, with MiB/s (expect a few hundred
+  to a thousand MiB/s); 512 MiB left to first touch; decommit gives back. EXPECTED: PASS all.
+
+lazy: one thread, 64 MiB by first touch: 64 faults (1 MiB a fault), ~0.5-1 ms each in the handler;
+  8 threads x 128 MiB in their own GiBs; 8 threads interleaved over 512 MiB (retries counted); a fault with locks
+  held; decommit then zero again; read() into unbacked memory -> EFAULT (INFO), ReadFile -> TRUE.
+  EXPECTED: PASS all, VERDICT "no deadlock". DESIGN CHANGE if a TIMEOUT or "no progress for 10 s" appears: the fault
+  path deadlocks (risk M5): back everything eagerly instead (no first touch), as Savage Wind's explicit commits.
+
+stacks: MXCSR control bits 0x1f80 on the main thread (bits 0-5 are sticky flags its own arithmetic sets: run 1 saw
+  0x1fa2, precision and denormal, which change no result), a CreateThread(64 MiB) thread (7 MiB of recursion, 0x1f80),
+  a plain pthread (its creator's, flags included); 40 threads of 64 MiB at once with flexible memory unchanged;
+  stacks.fiber: two fibers and the thread switched 3,000 times on ps5_fiber.c's own switch (run 1 crashed in
+  DeleteFiber's free after one getcontext/swapcontext fiber), values kept, both deleted, the heap used after.
+  EXPECTED: PASS all. DESIGN CHANGE if flexible memory drops by hundreds of MiB (stacks not in direct memory).
+
+vk: the device (RADV NAVI21, VK_EXT_external_memory_host, minImportedHostPointerAlignment 16384), then
+  vk.import: 64 MiB of 1,024 separately allocated 64 KiB units, imported, written by a compute shader, every word
+  right; vk.recommit: a commit across the imported range's end, then the range written again, every word right;
+  vk.lazy: 64 MiB backed by first-touch faults, imported, every word right. EXPECTED: PASS all (risk M15 answered).
+  DESIGN CHANGE if vk.import fails: guest pools must be backed as single allocations before import; if only
+  vk.recommit fails: a commit must never re-protect a backed unit (ps5_window.c already does not).
+
+memory: STEP lines every 256 MiB with the pool's free and largest block and flexible memory, up to 9 GiB (the
+  target), with RADV's device alive. EXPECTED: 9216 MiB held (12 GiB pool, ~0.2 GiB used at start), PASS, then all
+  given back. DESIGN CHANGE if it stops below 9809 MiB minus what the renderer needs (VERDICT): HOS_MEMORY_MB and
+  the Minimum preset must come down (gap 5).
+
+files: libc's open() stops near 249 (files.limit INFO, EMFILE). fdv is off (run 3: the console refuses a title dup2 over
+  a file, EPERM; HOOKSHOT_PS5_FDV=1 tries it again): files.reads PASS when the files CreateFileA opens (249) read right
+  twice; INFO files.fdv says why it is off. DESIGN CHANGE only if the game ever meets the limit (klog: "ps5: open files:
+  ... refused, too many open"): then a cache of open files in win32_posix.c's handles.
+nup (game.nup in /data/hookshot): descriptors counted with fcntl, else fstat, else "unknown" (run 3's fcntl answered
+  nothing on the console): nup.open no longer fails for a count it cannot make.
+
+data: /data for the title: "visible" with ShadowMountPlus 1.7beta3+ (the user's is 1.7beta11), else "no /data".
+  data.direct (visible only): 2048 MiB written by the title itself, STEP lines per 256 MiB, then read back
+  (1.9-3.7 GiB/s expected; a page-cache read may be faster). EXPECTED: ~240 MiB/s for the first ~1.3 GiB, then
+  ~2 MiB/s if the console's write throttle applies to /data too (VERDICT says which).
+  broker.start: "started" (sent to the ELF loader, answering on 9147 within ~3-6 s) or "present" (from an earlier
+  run); "elf loader unavailable" means no elfldr on 9021. broker.write: 2048 MiB through the broker, STEP lines;
+  EXPECTED: no fall to ~2 MiB/s past 1.3 GiB (the broker is a payload, not throttled). broker.read: 256 MiB back,
+  every byte right. broker.writefile (run 3: all 16 writes fell back, the file was 0644 and the broker another identity;
+  files under /data are now made 0666, INFO says the file's mode and any refusal) and broker.stdio: 256 MiB each through the runtime's WriteFile and fopen/fwrite
+  under /data/hookshot, every byte made by the broker (its MiB counted), read back right; broker.append: small (stdio's)
+  and 64 KiB (the broker's) appends in turn, in order, ftello right. DESIGN CHANGE: if data.direct shows no throttle, the broker is needed only where /data is not
+  visible; if the broker cannot start, big writes stay the title's (made on the PC instead: the renderer caches).
+
+Machine notes: every result is one line; grep '^FAIL\|^TIMEOUT\|^VERDICT' gives the decisions.

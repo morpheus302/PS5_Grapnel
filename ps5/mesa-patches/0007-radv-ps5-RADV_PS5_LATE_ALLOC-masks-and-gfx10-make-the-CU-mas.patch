@@ -1,0 +1,136 @@
+Subject: [PATCH 7/7] radv/ps5: RADV_PS5_LATE_ALLOC=masks and gfx10 make the CU masks take effect (lot 57)
+
+The PS5 winsys never set radeon_info.spi_cu_en, which amdgpu's path sets to all
+(set_custom_cu_en_mask) and ac_apply_cu_en ANDs every CU mask with: every CU
+mask went out 0 (SPI_SHADER_PGM_RSRC3_PS/GS, RSRC4_GS, the compute
+STATIC_THREAD_MGMT, seen in the PC model's stream), and the hardware ignores the
+graphics ones when one of them is 0. So the CU ac_compute_late_alloc keeps free
+of late-allocated vertex waves, against the deadlock it names, was never kept
+free on the console.
+
+RADV_PS5_LATE_ALLOC=masks keeps GFX10.3's late allocation with the masks taking
+effect (spi_cu_en all: CU1 free); gfx10 now also makes them take effect (at most
+64 waves, CU2 and CU3 free). off and unset are unchanged; nothing compiled
+changes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+---
+ src/amd/vulkan/radv_cmd_buffer.c            |  3 ++-
+ src/amd/vulkan/radv_ps5_waits.h             |  9 +++++----
+ src/amd/vulkan/radv_shader.c                | 26 ++++++++++++++++----------
+ src/amd/vulkan/winsys/ps5/radv_ps5_winsys.c |  7 +++++++
+ 4 files changed, 30 insertions(+), 15 deletions(-)
+
+diff --git a/src/amd/vulkan/radv_cmd_buffer.c b/src/amd/vulkan/radv_cmd_buffer.c
+index 32b39771a12fda790c6f31dc5df039e9b4fdc270..5c35236a1104fb7367db1f879af78b0af7cf4d08 100644
+--- a/src/amd/vulkan/radv_cmd_buffer.c
++++ b/src/amd/vulkan/radv_cmd_buffer.c
+@@ -1863,7 +1863,8 @@ const char *
+ radv_ps5_waits_settings(void)
+ {
+    static char line[256];
+-   static const char *const late_alloc[] = {"as GFX10.3", "as GFX10", "off"};
++   static const char *const late_alloc[] = {"as GFX10.3, CU masks written 0 (ignored)", "as GFX10 with CU masks", "off",
++                                            "as GFX10.3 with CU masks"};
+    const int debug_sync = p_atomic_read(&radv_ps5_debug_sync);
+    snprintf(line, sizeof(line),
+             "draw waits (RADV_PS5_SYNC_PS): %s; compute waits (RADV_PS5_SYNC_CS): %s; RADV_DEBUG syncshaders: %s; "
+diff --git a/src/amd/vulkan/radv_ps5_waits.h b/src/amd/vulkan/radv_ps5_waits.h
+index 9fb520a9d19f2282399578d1abea757719a8bd3a..2688208bed5b99e3820334cd1de67e95599a0731 100644
+--- a/src/amd/vulkan/radv_ps5_waits.h
++++ b/src/amd/vulkan/radv_ps5_waits.h
+@@ -13,9 +13,10 @@
+  * - RADV_PS5_SYNC_PS: unset or 0 no wait after a draw; 1 or each after every draw (syncshaders' half); program only
+  *   before a draw whose shaders are not the last draw's (and before a command buffer's first draw and a dispatch) when a
+  *   draw ran since the last wait; vertex: VS_PARTIAL_FLUSH after every draw (the vertex and primitive waves only).
+- * - RADV_PS5_LATE_ALLOC: unset as GFX10.3 (late allocation of the parameter cache for NGG waves, CU1 left out of their
+- *   CU mask); gfx10 as GFX10 (GC 10.1.x) asks: the late allocation held to 64 waves and CU2 and CU3 left out; off: no late
+- *   allocation, every CU.
++ * - RADV_PS5_LATE_ALLOC: unset as before (GFX10.3's late allocation of the parameter cache for NGG waves, 80 waves of 64
++ *   a shader array with culling, and CU masks the winsys's spi_cu_en of 0 writes as 0, which the hardware ignores); off:
++ *   no late allocation, every CU; masks: as before with the CU masks taking effect (CU1 free of vertex waves); gfx10: as
++ *   GFX10 (GC 10.1.x) asks, at most 64 waves and CU2 and CU3 free, the masks taking effect.
+  * - RADV_PS5_NGGC: unset as ever; 0 the shader-based NGG culling turned off at draw time (its settings register 0), the
+  *   shaders unchanged: the hardware's own culling stays.
+  *
+@@ -51,7 +52,7 @@ unsigned radv_ps5_waits_stats(uint64_t *out, unsigned slots);
+ /* The switches as the driver reads them, one line ("draw waits: program; compute waits: on; ..."). */
+ const char *radv_ps5_waits_settings(void);
+ 
+-/* RADV_PS5_LATE_ALLOC's choice, for radv_shader.c and the line above: 0 as GFX10.3, 1 gfx10, 2 off */
++/* RADV_PS5_LATE_ALLOC's choice, for radv_shader.c, the winsys and the line above: 0 as before, 1 gfx10, 2 off, 3 masks */
+ int radv_ps5_late_alloc_mode(void);
+ 
+ /* Applies RADV_PS5_LATE_ALLOC to what ac_compute_late_alloc gave a vertex (ngg false) or NGG shader. */
+diff --git a/src/amd/vulkan/radv_shader.c b/src/amd/vulkan/radv_shader.c
+index 7ff6e6db82e7cf34e077a38b842c45703b90145f..ccbb0181ea0c9629715bd8fd06408066f8522ce2 100644
+--- a/src/amd/vulkan/radv_shader.c
++++ b/src/amd/vulkan/radv_shader.c
+@@ -1667,16 +1667,20 @@ radv_get_num_pos_exports(const struct radv_shader_info *info, unsigned *clip_dis
+ 
+ /* RADV_PS5_LATE_ALLOC (lot 57, radv_ps5_waits.h): the late allocation of the parameter cache that vertex and NGG waves
+  * may start with, and the CUs they may run on. The console's GPU is described to RADV as a GFX10.3, whose rules
+- * ac_compute_late_alloc applies: up to 10 (culling) or 4 waves of 64 per CU of a shader array late, CU1 left out of
+- * the vertex waves' CU mask. On GFX10 (GC 10.1.x, which the winsys says this GPU's fixed-function blocks are) the same
+- * function holds NGG's to 64 "to prevent a hang (hw bug)" and leaves out CU2 and CU3 "to prevent a hw deadlock ...
+- * caused by late alloc": a vertex wave that started without its parameter cache lines waits for pixel waves to free
+- * some, and those need a CU. Both are register values set when a shader is made (or read from the cache): nothing
+- * compiled changes.
+- * - unset: as GFX10.3 (as before);
+- * - gfx10: GFX10's limit and CU mask;
++ * ac_compute_late_alloc applies: up to 10 (culling) or 4 waves of 64 per CU of a shader array late (80 or 32 with the
++ * described 8 CUs), CU1 left out of the vertex waves' CU mask. On GFX10 (GC 10.1.x, which the winsys says this GPU's
++ * fixed-function blocks are) the same function holds NGG's to 64 "to prevent a hang (hw bug)" and leaves out CU2 and
++ * CU3 "to prevent a hw deadlock ... caused by late alloc": a vertex wave that started without its parameter cache
++ * lines waits for pixel waves to free some, and those need a CU. And on this driver every CU mask is written 0: the
++ * PS5 winsys never sets info->spi_cu_en (amdgpu's path sets it to all, set_custom_cu_en_mask), which ac_apply_cu_en
++ * ANDs every mask with; the hardware ignores the graphics CU masks when one of them is 0, so no CU is kept free of
++ * vertex waves at all. All register values set when a shader is made (or read from the cache): nothing compiled changes.
++ * - unset (or gfx103): as before;
+  * - off (or 0): no late allocation (0 waves, no oversubscription of the parameter cache, every CU), what
+- *   ac_compute_late_alloc gives a shader that uses scratch. */
++ *   ac_compute_late_alloc gives a shader that uses scratch;
++ * - masks: as before, but the CU masks take effect (the winsys sets spi_cu_en to all, as amdgpu's path does): CU1 of
++ *   each shader array free of vertex waves, as RADV runs a GFX10.3 on Linux;
++ * - gfx10: GFX10's limit and CU2 and CU3 free, the masks taking effect as with masks. */
+ int
+ radv_ps5_late_alloc_mode(void)
+ {
+@@ -1688,8 +1692,10 @@ radv_ps5_late_alloc_mode(void)
+          m = 1;
+       else if (v && (!strcmp(v, "off") || !strcmp(v, "0")))
+          m = 2;
++      else if (v && !strcmp(v, "masks"))
++         m = 3;
+       else if (v && *v && strcmp(v, "gfx103"))
+-         fprintf(stderr, "radv/ps5: RADV_PS5_LATE_ALLOC=%s is not gfx10, off or gfx103: as GFX10.3\n", v);
++         fprintf(stderr, "radv/ps5: RADV_PS5_LATE_ALLOC=%s is not off, masks, gfx10 or gfx103: as before\n", v);
+       mode = m;
+    }
+    return mode;
+diff --git a/src/amd/vulkan/winsys/ps5/radv_ps5_winsys.c b/src/amd/vulkan/winsys/ps5/radv_ps5_winsys.c
+index ba3e18165294d26cc47255b24562e4334988c10d..bef8a7c8bcc034f573fee4f6fb7bb3e18d9ece28 100644
+--- a/src/amd/vulkan/winsys/ps5/radv_ps5_winsys.c
++++ b/src/amd/vulkan/winsys/ps5/radv_ps5_winsys.c
+@@ -14,6 +14,7 @@
+ #include "addrlib/inc/addrtypes.h"
+ #include "addrlib/src/amdgpu_asic_addr.h"
+ #include "tools/radv_debug.h"
++#include "radv_ps5_waits.h"
+ #include "util/os_time.h"
+ #include "util/u_atomic.h"
+ #include "util/u_math.h"
+@@ -341,6 +342,12 @@ radv_ps5_describe_gpu(struct radeon_info *info, bool compiler_compat_mode)
+     * fast launch, run. Indirect ones go through ordinary indirect draws
+     * (radv_mesh_draw_records_enabled). */
+    info->has_dispatch_mesh_indirect = false;
++   /* The CU enable mask every CU mask is ANDed with (ac_apply_cu_en), which amdgpu's path sets to all
++    * (set_custom_cu_en_mask) and this description never did: 0, so every CU mask went out 0, which the hardware
++    * ignores for graphics. RADV_PS5_LATE_ALLOC=masks or gfx10 (lot 57, radv_ps5_waits.h) set it to all, so that the
++    * late allocation's CU masks take effect; the compute masks then say every CU instead of 0. */
++   if (radv_ps5_late_alloc_mode() == 1 || radv_ps5_late_alloc_mode() == 3)
++      info->spi_cu_en = ~0u;
+    /* No exported function holds the GPU at a stable power state
+     * (radv_ps5_ctx_set_pstate refuses every state but none), so the profiling
+     * lock VK_KHR_performance_query takes always failed

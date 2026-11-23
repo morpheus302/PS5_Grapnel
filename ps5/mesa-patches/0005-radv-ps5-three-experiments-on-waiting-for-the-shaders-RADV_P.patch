@@ -1,0 +1,145 @@
+Subject: [PATCH 5/7] radv/ps5: three experiments on waiting for the shaders: RADV_PS5_SUBMIT_IDLE, RADV_PS5_SYNC_CS, RADV_PS5_SYNC_PS
+
+A title stopped the GPU in the first submission after the one that held the frame's compute passes, ten
+times sooner with one command buffer a submission, and ran with RADV_DEBUG=syncshaders. To find which wait
+it needs: RADV_PS5_SUBMIT_IDLE=1 ends each AGC submission with PS_PARTIAL_FLUSH and CS_PARTIAL_FLUSH,
+before its completion; RADV_PS5_SYNC_CS=1 and RADV_PS5_SYNC_PS=1 are the halves of syncshaders, after
+each dispatch and after each draw. All unset: nothing changes.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+
+---
+ src/amd/vulkan/radv_cmd_buffer.c        | 19 +++++++++++++-
+ src/amd/vulkan/winsys/ps5/radv_ps5_cs.c | 45 +++++++++++++++++++++++++++++----
+ 2 files changed, 58 insertions(+), 6 deletions(-)
+
+diff --git a/src/amd/vulkan/radv_cmd_buffer.c b/src/amd/vulkan/radv_cmd_buffer.c
+index 79d5e0ac1852c58aa3c1954b8af303a60da40af9..3061ecef3a12a64ab565c4ec7e174111c58cd9bb 100644
+--- a/src/amd/vulkan/radv_cmd_buffer.c
++++ b/src/amd/vulkan/radv_cmd_buffer.c
+@@ -1766,6 +1766,22 @@ radv_emit_thread_trace_marker(const struct radv_device *device, struct radv_cmd_
+    radeon_end();
+ }
+ 
++/* RADV_PS5_SYNC_CS=1 and RADV_PS5_SYNC_PS=1, experiments: the halves of
++ * RADV_DEBUG=syncshaders, the wait for the compute engine after each dispatch
++ * and the wait for the graphics one after each draw, each on its own. */
++static unsigned
++radv_ps5_sync_flags(void)
++{
++   static int flags = -1;
++   if (flags < 0) {
++      const char *const cs = getenv("RADV_PS5_SYNC_CS");
++      const char *const ps = getenv("RADV_PS5_SYNC_PS");
++      flags = (cs && atoi(cs) != 0 ? RADV_CMD_FLAG_CS_PARTIAL_FLUSH : 0) |
++              (ps && atoi(ps) != 0 ? RADV_CMD_FLAG_PS_PARTIAL_FLUSH : 0);
++   }
++   return (unsigned)flags;
++}
++
+ static void
+ radv_cmd_buffer_after_draw(struct radv_cmd_buffer *cmd_buffer, enum radv_cmd_flush_bits flags)
+ {
+@@ -1774,7 +1790,8 @@ radv_cmd_buffer_after_draw(struct radv_cmd_buffer *cmd_buffer, enum radv_cmd_flu
+    const struct radv_instance *instance = radv_physical_device_instance(pdev);
+    struct radv_cmd_stream *cs = radv_get_pm4_cs(cmd_buffer);
+ 
+-   if (instance->debug_flags & (RADV_DEBUG_SYNC_SHADERS | RADV_DEBUG_FULL_SYNC)) {
++   if ((instance->debug_flags & (RADV_DEBUG_SYNC_SHADERS | RADV_DEBUG_FULL_SYNC)) ||
++       ((unsigned)flags & radv_ps5_sync_flags())) {
+       enum rgp_flush_bits sqtt_flush_bits = 0;
+ 
+       if (instance->debug_flags & RADV_DEBUG_FULL_SYNC) {
+diff --git a/src/amd/vulkan/winsys/ps5/radv_ps5_cs.c b/src/amd/vulkan/winsys/ps5/radv_ps5_cs.c
+index 03b9b875f34c58c9308cc5902a018a65080604d5..29a7fbc8abea73a0f31028ef8750974fe9e57fb9 100644
+--- a/src/amd/vulkan/winsys/ps5/radv_ps5_cs.c
++++ b/src/amd/vulkan/winsys/ps5/radv_ps5_cs.c
+@@ -321,6 +321,36 @@ radv_ps5_cs_annotate(struct ac_cmdbuf *cs, const char *marker)
+ #define RADV_PS5_COMPLETION_EVENT 20u
+ #define RADV_PS5_COMPLETION_GCR 0x30cu
+ 
++/* RADV_PS5_SUBMIT_IDLE=1, an experiment: each AGC submission ends by waiting
++ * for the graphics and compute shaders it started (PS_PARTIAL_FLUSH and
++ * CS_PARTIAL_FLUSH), before its completion and so before the next submission,
++ * which starts from reset GPU state. A title stopped the GPU in the first
++ * submission after one that held its compute passes, ten times sooner with one
++ * command buffer a submission, and not at all with RADV_DEBUG=syncshaders.
++ * Unset or 0: as ever. */
++#define RADV_PS5_IDLE_WORDS 4
++
++static bool
++radv_ps5_submit_idle(void)
++{
++   static int on = -1;
++   if (on < 0) {
++      const char *const setting = getenv("RADV_PS5_SUBMIT_IDLE");
++      on = setting && atoi(setting) != 0;
++   }
++   return on != 0;
++}
++
++static uint32_t *
++radv_ps5_idle_words(uint32_t *words)
++{
++   words[0] = PKT3(PKT3_EVENT_WRITE, 0, 0);
++   words[1] = EVENT_TYPE(V_028A90_PS_PARTIAL_FLUSH) | EVENT_INDEX(4);
++   words[2] = PKT3(PKT3_EVENT_WRITE, 0, 0);
++   words[3] = EVENT_TYPE(V_028A90_CS_PARTIAL_FLUSH) | EVENT_INDEX(4);
++   return words + RADV_PS5_IDLE_WORDS;
++}
++
+ static void
+ radv_ps5_completion_words(uint32_t *words, uint64_t marker_address, uint32_t value)
+ {
+@@ -525,10 +555,10 @@ radv_ps5_note_submission(uint32_t words, uint64_t claim_ns, uint64_t copy_ns)
+    radv_ps5_large_stats(large);
+    fprintf(stderr,
+            "radv/ps5 submissions: window count=%" PRIu64 " kwords=%" PRIu64 " claim_ms=%.1f copy_ms=%.1f flush_ms=%.1f"
+-           " agc_ms=%.1f suspend_ms=%.1f large_align=%u large=%u at_2m=%u\n",
++           " agc_ms=%.1f suspend_ms=%.1f large_align=%u large=%u at_2m=%u submit_idle=%u\n",
+            radv_ps5_submit_window.count, radv_ps5_submit_window.words / 1024, radv_ps5_submit_window.claim_ns / 1e6,
+            radv_ps5_submit_window.copy_ns / 1e6, times[0] / 1e6, times[1] / 1e6, times[2] / 1e6, large[0], large[1],
+-           large[2]);
++           large[2], (unsigned)radv_ps5_submit_idle());
+    memset(&radv_ps5_submit_window, 0, sizeof(radv_ps5_submit_window));
+    radv_ps5_submit_window.window_start = now;
+ }
+@@ -609,8 +639,9 @@ radv_ps5_cs_submit(struct radeon_winsys_ctx *rctx, const struct radv_winsys_subm
+ 
+    /* Plan: which unit starts each AGC submission, and the words in all. */
+    const unsigned unit_count = util_dynarray_num_elements(&units, struct radv_ps5_unit);
+-   const uint32_t room = RADV_PS5_SUBMIT_MAX_DW - RADV_PS5_COMPLETION_WORDS;
+-   uint32_t count = preamble_words + RADV_PS5_COMPLETION_WORDS;
++   const uint32_t idle_words = radv_ps5_submit_idle() ? RADV_PS5_IDLE_WORDS : 0;
++   const uint32_t room = RADV_PS5_SUBMIT_MAX_DW - RADV_PS5_COMPLETION_WORDS - idle_words;
++   uint32_t count = preamble_words + idle_words + RADV_PS5_COMPLETION_WORDS;
+    uint32_t fill = preamble_words;
+    bool too_large = false;
+    for (unsigned u = 0; u < unit_count; u++) {
+@@ -619,7 +650,7 @@ radv_ps5_cs_submit(struct radeon_winsys_ctx *rctx, const struct radv_winsys_subm
+          too_large = true;
+       if (fill > preamble_words && fill + unit->words > room) {
+          unit->starts_part = true;
+-         count += preamble_words;
++         count += idle_words + preamble_words;
+          fill = preamble_words;
+       }
+       fill += unit->words;
+@@ -646,6 +677,8 @@ radv_ps5_cs_submit(struct radeon_winsys_ctx *rctx, const struct radv_winsys_subm
+    for (unsigned u = 0; u < unit_count; u++) {
+       const struct radv_ps5_unit *const unit = util_dynarray_element(&units, struct radv_ps5_unit, u);
+       if (unit->starts_part) {
++         if (idle_words)
++            at = radv_ps5_idle_words(at);
+          util_dynarray_append(&starts, (uint32_t)(at - words));
+          at = radv_ps5_copy_streams(at, submit->initial_preamble_cs, submit->initial_preamble_count);
+       }
+@@ -657,6 +690,8 @@ radv_ps5_cs_submit(struct radeon_winsys_ctx *rctx, const struct radv_winsys_subm
+          at += piece->cdw;
+       }
+    }
++   if (idle_words)
++      at = radv_ps5_idle_words(at);
+    radv_ps5_completion_words(at, (uint64_t)(uintptr_t)queue->marker, (uint32_t)seq);
+    at += RADV_PS5_COMPLETION_WORDS;
+    assert((uint32_t)(at - words) == count);

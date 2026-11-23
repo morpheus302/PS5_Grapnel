@@ -1,0 +1,11 @@
+#version 450
+// The platform probe's import check (probe_vk.c): every word of the imported guest memory written from the GPU with a
+// pattern the CPU then checks. Grid-stride, so one dispatch of a few thousand groups covers 64 MiB.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) buffer Words { uint words[]; };
+layout(push_constant) uniform Push { uint seed; uint count; } push;
+void main() {
+    const uint stride = gl_NumWorkGroups.x * 256u;
+    for (uint i = gl_GlobalInvocationID.x; i < push.count; i += stride)
+        words[i] = (i * 2654435761u) ^ push.seed;
+}

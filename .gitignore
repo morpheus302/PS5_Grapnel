@@ -1,0 +1,95 @@
+# ---- never commit the game or anything made from it ----
+# (decompressed modules, the loaded image, lifted C, test builds, romfs/exefs copies, dumps, keys)
+work/
+gen/
+image/
+exefs/
+romfs/
+*.bin
+*.keys
+*.nso
+*.nca
+*.nsp
+*.xci
+gamefile/
+*.nup
+*.nsz
+*.xcz
+# (saves: only the scrubbed ones in assets/saves, CONTRIBUTING.md)
+*.sav
+!/assets/saves/**/*.sav
+
+# ---- build output and caches ----
+build/
+/third_party_objects/
+__pycache__/
+*.pyc
+*.o
+*.obj
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.sha1
+*.log
+
+# ---- Linux builds ----
+build-linux/
+*.so
+# (grapnel) the ZBIC program nx2/zbic.py builds on first use
+nx2/zbic_unpack/zbic_unpack
+nx2/zbic_unpack/zbic_unpack.exe
+
+# ---- a checkout's own development builds on Windows (scripts/dev_build.py) ----
+build-windows/
+
+# ---- NVIDIA's DLSS SDK (scripts/ngx_sdk.py): NVIDIA's files, never committed ----
+ngx-sdk/
+test-results/
+_deps/
+
+# ---- a link to <build>/compile_commands.json (nx2/build.py write_compdb), for clangd and clang-tidy ----
+/compile_commands.json
+
+# ---- Grapnel (PS5): never in the repository ----
+# the port's working folders, should they ever end up in a clone
+/notes-agents/
+/logs/
+/dist/
+/wt/
+/ext/
+/ps5-stack/
+/mesa-work/
+/saves-backup/
+/probe/
+/REPRISE.md
+/PLAN.md
+# what scripts/ps5/fetch-headers.sh downloads
+/third_party-ps5/cpm/
+/third_party-ps5/dl/
+# what the console reads, made on the PC from the player's own files or for one console only
+*.rgba
+*.dds
+# (grapnel) the project's own home-screen picture, drawn for it (dist/next/grapnel-images, style A): made to be published
+!/scripts/grapnel-builder/art/pic0.dds
+sce_sys/
+!/scripts/ps5/**/sce_sys/
+prompts/
+PRIVE-*
+*_env*.txt
+*_options*.ini
+*_frames*.csv
+# the settings template, the one settings file admitted
+!/ps5/hookshot_env.default.txt
+# the console's and the toolchain's binaries
+eboot*
+*.elf
+*.prx
+*.self
+*.pkg
+*.ffpkg
+*.a
+*.fgw
+!/third_party/mihawkgen/framegen/models/network.fgw

@@ -1,0 +1,901 @@
+Subject: [PATCH 1/7] radv/ps5: an emulated indirect task draw costs what its count buffer draws
+
+An emulated indirect task draw (vkCmdDrawMeshTasksIndirect[Count]EXT with a
+task shader, radv_task_emulated) recorded, for every one of its maxDrawCount
+draws, every chunk maxTaskWorkGroupTotalCount could need: 64 chunks a draw at
+a 256-byte payload, 256 at 3,200 bytes, each a task dispatch, a records
+prepass of the rings' entries and a draw, whatever the count buffer held.
+On the console that is about 148 us (256 bytes) and 311 us (3,200 bytes) of
+GPU time and 26-104 us of CPU time per draw slot: count@64 took 9.2 ms and
+count@4096 586 ms with a count of 1, and the stream grew by about 16,000
+words a draw slot.
+
+The draws now go in groups of up to 4,096, and a group's chunks take its
+draws' task workgroups one draw after the other, so that a chunk holds as
+many draws as fit:
+
+- A prepass (radv_meta_task_table, one workgroup of 512) reads the count
+  buffer and the group's draws, scans their workgroup counts in LDS and
+  writes the group's table (each draw's grid and first workgroup among the
+  group's) and each chunk's task dispatch, records prepass dispatch and
+  draw count, 0 past the group's workgroups.
+- A chunk's task shader finds its workgroup's draw in the table, a uniform
+  binary search of at most 12 scalar loads (radv_nir_lower_abi.c), takes
+  its grid, workgroup ID and draw ID from it, and writes the draw's index
+  to its mesh draw record, where the mesh shaders read their draw ID. Its
+  ring entry is unchanged: its index in the chunk.
+- The records prepass is dispatched from the chunk's count (a workgroup of
+  32 records, or one workgroup with a publish ring) instead of one
+  invocation per ring entry, and leaves the records' draw IDs alone.
+
+As many chunks are recorded as the group's own maximum needs, up to a
+budget of task workgroups for a group (RADV_PS5_TASK_WORKGROUPS, by default
+maxTaskWorkGroupTotalCount, so that any one draw is whole) and 1,024 for a
+draw command; workgroups past them are not drawn, which the first such
+command tells on stderr. A direct task draw is unchanged.
+
+The stream is no longer split while such a draw is recorded: its chunks
+emit their draws without the draw's state, which a split would have reset
+to the preamble's (a large count could do so before).
+
+(cherry picked from commit da67d3ea2876373b13620f3723919c4238eeccb9)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+---
+ src/amd/vulkan/meta/radv_meta.h           |   8 +-
+ src/amd/vulkan/meta/radv_meta_mesh_draw.c |  51 ++++++---
+ src/amd/vulkan/nir/radv_meta_nir.c        | 176 +++++++++++++++++++++---------
+ src/amd/vulkan/nir/radv_meta_nir.h        |   2 +-
+ src/amd/vulkan/nir/radv_nir_lower_abi.c   | 154 ++++++++++++++++++++------
+ src/amd/vulkan/radv_cmd_buffer.c          | 129 ++++++++++++++++------
+ src/amd/vulkan/radv_cmd_buffer.h          |   5 +
+ src/amd/vulkan/radv_constants.h           |  11 ++
+ src/amd/vulkan/radv_device.c              |   4 +
+ src/amd/vulkan/radv_device.h              |   4 +
+ src/amd/vulkan/radv_shader.h              |  38 ++++++-
+ 11 files changed, 439 insertions(+), 143 deletions(-)
+
+diff --git a/src/amd/vulkan/meta/radv_meta.h b/src/amd/vulkan/meta/radv_meta.h
+index 72af06792fe88210e2d54d4b855a0a336f0d796c..156a647f6a222a49f1c193c459bd7e59f712959f 100644
+--- a/src/amd/vulkan/meta/radv_meta.h
++++ b/src/amd/vulkan/meta/radv_meta.h
+@@ -385,10 +385,12 @@ radv_get_image_stride_for_96bit(const struct radv_device *device, const struct r
+ 
+ uint64_t radv_meta_mesh_draw_records(struct radv_cmd_buffer *cmd_buffer, uint64_t indirect_va, uint32_t stride,
+                                      uint64_t count_va, uint32_t max_count, uint32_t parts, uint64_t publish_ring,
+-                                     uint64_t records_va, uint32_t task_rings, uint32_t task_draw_id);
++                                     uint64_t records_va, uint32_t task_rings, uint32_t task_draw_id,
++                                     uint64_t dispatch_va);
+ 
+-void radv_meta_task_chunks(struct radv_cmd_buffer *cmd_buffer, uint64_t indirect_va, uint32_t stride, uint64_t count_va,
+-                           uint32_t first_draw, uint32_t draws, uint32_t chunks, uint32_t entries, uint64_t out_va);
++void radv_meta_task_table(struct radv_cmd_buffer *cmd_buffer, uint64_t indirect_va, uint32_t stride, uint64_t count_va,
++                          uint32_t max_draws, uint32_t first_draw, uint32_t draws, uint32_t search, uint32_t chunks,
++                          uint32_t entries, bool one_group, uint64_t out_va);
+ 
+ void radv_compute_copy_memory_indirect(struct radv_cmd_buffer *cmd_buffer,
+                                        const VkCopyMemoryIndirectInfoKHR *pCopyMemoryIndirectInfo);
+diff --git a/src/amd/vulkan/meta/radv_meta_mesh_draw.c b/src/amd/vulkan/meta/radv_meta_mesh_draw.c
+index 1c9f9e39db127d0204ecf8f9671a1f40f4c0015c..c7573ba8ee440ae85dd64a85eb3d24c9a483d349 100644
+--- a/src/amd/vulkan/meta/radv_meta_mesh_draw.c
++++ b/src/amd/vulkan/meta/radv_meta_mesh_draw.c
+@@ -56,13 +56,15 @@ get_pipeline(struct radv_device *device, enum radv_meta_object_key_type key, uin
+  * (radv_mesh_draw_records_enabled), written from its commands before the draw reads them.
+  * publish_ring is the publish ring's address for a shader that publishes its outputs
+  * (radv_ms_publishes), 0 otherwise. An emulated task draw's chunk (radv_task_emulated)
+- * names where they go (records_va), its task rings and the task draw; otherwise records_va
+- * is 0 and they go to the upload buffer. Returns their address, 0 on failure.
++ * names where they go (records_va), its task rings and the task draw (UINT32_MAX: the
++ * task shaders wrote each record's); otherwise records_va is 0 and they go to the upload
++ * buffer. dispatch_va, when not 0, holds the prepass's workgroups (an emulated indirect
++ * task draw's chunk, radv_meta_task_table). Returns their address, 0 on failure.
+  */
+ uint64_t
+ radv_meta_mesh_draw_records(struct radv_cmd_buffer *cmd_buffer, uint64_t indirect_va, uint32_t stride,
+                             uint64_t count_va, uint32_t max_count, uint32_t parts, uint64_t publish_ring,
+-                            uint64_t records_va, uint32_t task_rings, uint32_t task_draw_id)
++                            uint64_t records_va, uint32_t task_rings, uint32_t task_draw_id, uint64_t dispatch_va)
+ {
+    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+    VkPipelineLayout layout;
+@@ -99,8 +101,13 @@ radv_meta_mesh_draw_records(struct radv_cmd_buffer *cmd_buffer, uint64_t indirec
+    };
+    radv_meta_push_constants(cmd_buffer, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), constants);
+ 
+-   /* With a ring, one workgroup goes through the draws in order. */
+-   radv_unaligned_dispatch(cmd_buffer, publish_ring ? 32 : max_count, 1, 1);
++   if (dispatch_va) {
++      const struct radv_dispatch_info info = {.indirect_va = dispatch_va};
++      radv_compute_dispatch(cmd_buffer, &info);
++   } else {
++      /* With a ring, one workgroup goes through the draws in order. */
++      radv_unaligned_dispatch(cmd_buffer, publish_ring ? 32 : max_count, 1, 1);
++   }
+ 
+    radv_meta_end(cmd_buffer);
+ 
+@@ -110,21 +117,27 @@ radv_meta_mesh_draw_records(struct radv_cmd_buffer *cmd_buffer, uint64_t indirec
+    return records_va;
+ }
+ 
+-/* An emulated indirect task draw's chunks (radv_task_emulated), for draws
+- * draws from first_draw, of chunks chunks of up to entries task workgroups
+- * each: at out_va, a radv_task_emu_block a chunk, then the chunks' dispatch
+- * workgroups (x, 1, 1, 0), x being the chunk's count of workgroups, 0 past
+- * its draw's.
++/* An emulated indirect task draw's group of draws (radv_task_emulated,
++ * radv_task_emu_draw_indirect): draws draw slots from first_draw of the
++ * command's max_draws, of which the count buffer (if any) has the first ones;
++ * its table of search entries and its chunks of up to entries task workgroups
++ * each go to out_va (radv_task_emu_block, RADV_TASK_EMU_TABLE_BYTES). A chunk's
++ * records prepass runs as one workgroup if one_group, as a workgroup of 32
++ * records otherwise.
+  */
+ void
+-radv_meta_task_chunks(struct radv_cmd_buffer *cmd_buffer, uint64_t indirect_va, uint32_t stride, uint64_t count_va,
+-                      uint32_t first_draw, uint32_t draws, uint32_t chunks, uint32_t entries, uint64_t out_va)
++radv_meta_task_table(struct radv_cmd_buffer *cmd_buffer, uint64_t indirect_va, uint32_t stride, uint64_t count_va,
++                     uint32_t max_draws, uint32_t first_draw, uint32_t draws, uint32_t search, uint32_t chunks,
++                     uint32_t entries, bool one_group, uint64_t out_va)
+ {
+    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+    VkPipelineLayout layout;
+    VkPipeline pipeline;
+ 
+-   VkResult result = get_pipeline(device, RADV_META_OBJECT_KEY_TASK_CHUNKS, 44, radv_meta_nir_build_task_chunks_cs,
++   assert(draws && draws <= search && search <= RADV_TASK_EMU_GROUP_DRAWS && util_is_power_of_two_nonzero(search));
++   assert(chunks && chunks <= RADV_TASK_EMU_MAX_CHUNKS);
++
++   VkResult result = get_pipeline(device, RADV_META_OBJECT_KEY_TASK_CHUNKS, 60, radv_meta_nir_build_task_table_cs,
+                                   &pipeline, &layout);
+    if (result != VK_SUCCESS) {
+       vk_command_buffer_set_error(&cmd_buffer->vk, result);
+@@ -136,16 +149,18 @@ radv_meta_task_chunks(struct radv_cmd_buffer *cmd_buffer, uint64_t indirect_va,
+ 
+    radv_meta_bind_compute_pipeline(cmd_buffer, pipeline);
+ 
+-   const uint32_t constants[11] = {
+-      indirect_va, indirect_va >> 32, count_va, count_va >> 32, out_va, out_va >> 32, stride, draws, chunks, entries,
+-      first_draw,
++   const uint32_t constants[15] = {
++      indirect_va, indirect_va >> 32, count_va, count_va >> 32, out_va,  out_va >> 32,
++      stride,      max_draws,         first_draw, draws,       search, DIV_ROUND_UP(search, RADV_TASK_EMU_TABLE_THREADS),
++      chunks,      entries,           one_group,
+    };
+    radv_meta_push_constants(cmd_buffer, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), constants);
+ 
+-   radv_unaligned_dispatch(cmd_buffer, draws * chunks, 1, 1);
++   radv_unaligned_dispatch(cmd_buffer, RADV_TASK_EMU_TABLE_THREADS, 1, 1);
+ 
+    radv_meta_end(cmd_buffer);
+ 
+-   /* The command processor reads the dispatches, the task shader the blocks. */
++   /* The command processor reads the chunks' dispatches and live words, the
++    * task shaders the table. */
+    cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_CS_PARTIAL_FLUSH | RADV_CMD_FLAG_INV_VCACHE | RADV_CMD_FLAG_INV_SCACHE;
+ }
+diff --git a/src/amd/vulkan/nir/radv_meta_nir.c b/src/amd/vulkan/nir/radv_meta_nir.c
+index 5a01044f11aa743735084f21fd8277d336d0602a..4079637133053b95c7e9dd74f907d3ea59d399c0 100644
+--- a/src/amd/vulkan/nir/radv_meta_nir.c
++++ b/src/amd/vulkan/nir/radv_meta_nir.c
+@@ -1453,8 +1453,15 @@ mesh_draw_record(nir_builder *b, nir_def *draw, nir_def *records_addr, nir_def *
+    nir_build_store_global(b, nir_vec4(b, nir_unpack_64_2x32_split_x(b, first_workgroup),
+                                       nir_unpack_64_2x32_split_y(b, first_workgroup), zero, zero),
+                           nir_iadd_imm(b, record_addr, 32), .align_mul = 16);
++   /* An emulated indirect task draw's task shaders wrote each record's draw
++    * (task_draw_id UINT32_MAX here, radv_task_emu_block). */
++   nir_push_if(b, nir_ieq_imm(b, task_draw_id, UINT32_MAX));
++   nir_build_store_global(b, nir_vec4(b, task_rings, zero, zero, zero), nir_iadd_imm(b, record_addr, 48),
++                          .write_mask = 0xd, .align_mul = 16);
++   nir_push_else(b, NULL);
+    nir_build_store_global(b, nir_vec4(b, task_rings, task_draw_id, zero, zero), nir_iadd_imm(b, record_addr, 48),
+                           .align_mul = 16);
++   nir_pop_if(b, NULL);
+ }
+ 
+ static nir_def *
+@@ -1562,71 +1569,142 @@ radv_meta_nir_build_mesh_draw_records_cs(void)
+    return b.shader;
+ }
+ 
+-/* radv_meta_task_chunks: for an emulated indirect task draw (radv_task_emulated),
+- * each draw's chunks of up to entries task workgroups: the chunk's block
+- * (radv_task_emu_block) and its dispatch's workgroups, 0 past the draw's, which
+- * the chunk's records and draw take as their count. An invocation a chunk.
++/* radv_meta_task_table: for an emulated indirect task draw (radv_task_emulated),
++ * a group of its draws (radv_task_emu_draw_indirect): one workgroup goes
++ * through the group's draws the count buffer has, a few each invocation, and
++ * adds up their task workgroups (a scan in LDS) to write the group's table
++ * (radv_task_emu_block, RADV_TASK_EMU_TABLE_BYTES): each draw's end, grid and
++ * first workgroup among the group's, taken draw after draw. Then each of the
++ * group's chunks of up to entries workgroups gets its task dispatch, the
++ * dispatch of its records prepass (one workgroup with a publish ring, a
++ * workgroup of 32 records otherwise) and a word that is 0 when it has no
++ * workgroups, which the command processor can skip it on. Workgroups past the
++ * chunks' are not drawn; sums saturate at UINT32_MAX.
+  */
+ nir_shader *
+-radv_meta_nir_build_task_chunks_cs(void)
++radv_meta_nir_build_task_table_cs(void)
+ {
+-   static_assert(sizeof(struct radv_task_emu_block) == 32 && offsetof(struct radv_task_emu_block, draw_id) == 12 &&
+-                    offsetof(struct radv_task_emu_block, first_workgroup) == 16,
+-                 "the stores below");
++   static_assert(RADV_TASK_EMU_GROUP_DRAWS % RADV_TASK_EMU_TABLE_THREADS == 0 &&
++                    RADV_TASK_EMU_MAX_CHUNKS % RADV_TASK_EMU_TABLE_THREADS == 0 &&
++                    (1u << RADV_TASK_EMU_SEARCH_BITS) == RADV_TASK_EMU_GROUP_DRAWS,
++                 "the loops below");
++   const unsigned per_thread_max = RADV_TASK_EMU_GROUP_DRAWS / RADV_TASK_EMU_TABLE_THREADS;
+ 
+-   nir_builder b = radv_meta_nir_init_shader(MESA_SHADER_COMPUTE, "meta_task_chunks_cs");
+-   b.shader->info.workgroup_size[0] = 64;
++   nir_builder b = radv_meta_nir_init_shader(MESA_SHADER_COMPUTE, "meta_task_table_cs");
++   b.shader->info.workgroup_size[0] = RADV_TASK_EMU_TABLE_THREADS;
+ 
+-   nir_def *global_id = radv_meta_nir_get_global_ids(&b, 1);
++   nir_def *t = nir_load_local_invocation_index(&b);
+ 
+    nir_def *indirect_addr = nir_load_push_constant(&b, 1, 64, nir_imm_int(&b, 0), .base = 0, .range = 8);
+    nir_def *count_addr = nir_load_push_constant(&b, 1, 64, nir_imm_int(&b, 0), .base = 8, .range = 8);
+    nir_def *out_addr = nir_load_push_constant(&b, 1, 64, nir_imm_int(&b, 0), .base = 16, .range = 8);
+    nir_def *stride = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 24, .range = 4);
+-   nir_def *draws = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 28, .range = 4);
+-   nir_def *chunks = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 32, .range = 4);
+-   nir_def *entries = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 36, .range = 4);
+-   nir_def *first_draw = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 40, .range = 4);
++   nir_def *max_draws = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 28, .range = 4);
++   nir_def *first_draw = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 32, .range = 4);
++   nir_def *draws = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 36, .range = 4);
++   nir_def *search = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 40, .range = 4);
++   nir_def *per_thread = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 44, .range = 4);
++   nir_def *chunks = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 48, .range = 4);
++   nir_def *entries = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 52, .range = 4);
++   nir_def *one_group = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 56, .range = 4);
+ 
+-   nir_def *total = nir_imul(&b, draws, chunks);
+-   nir_push_if(&b, nir_ult(&b, global_id, total));
+-   {
+-      nir_def *draw = nir_iadd(&b, first_draw, nir_udiv(&b, global_id, chunks));
+-      nir_def *chunk = nir_umod(&b, global_id, chunks);
++   nir_def *zero = nir_imm_int(&b, 0);
++   nir_def *one = nir_imm_int(&b, 1);
++   nir_def *none = nir_imm_int(&b, UINT32_MAX);
++   nir_def *no_grid = nir_imm_zero(&b, 3, 32);
++
++   /* The group's draws the count buffer has. */
++   nir_push_if(&b, nir_ine_imm(&b, count_addr, 0));
++   nir_def *counted = nir_umin(&b, nir_build_load_global(&b, 1, 32, count_addr, .align_mul = 4), max_draws);
++   nir_pop_if(&b, NULL);
++   nir_def *count = nir_if_phi(&b, counted, max_draws);
++   nir_def *n = nir_umin(&b, nir_usub_sat(&b, count, first_draw), draws);
++
++   /* This invocation's draws, per_thread from t * per_thread. */
++   nir_def *base = nir_imul(&b, t, per_thread);
++   nir_def *grids[RADV_TASK_EMU_GROUP_DRAWS / RADV_TASK_EMU_TABLE_THREADS];
++   nir_def *own[RADV_TASK_EMU_GROUP_DRAWS / RADV_TASK_EMU_TABLE_THREADS];
++   nir_def *incl[RADV_TASK_EMU_GROUP_DRAWS / RADV_TASK_EMU_TABLE_THREADS];
++   nir_def *acc = zero;
++   for (unsigned i = 0; i < per_thread_max; i++) {
++      nir_def *d = nir_iadd_imm(&b, base, i);
++      nir_def *in = nir_iand(&b, nir_ult(&b, nir_imm_int(&b, i), per_thread), nir_ult(&b, d, n));
++      nir_push_if(&b, in);
++      nir_def *cmd_addr = nir_iadd(&b, indirect_addr,
++                                   nir_imul(&b, nir_u2u64(&b, nir_iadd(&b, first_draw, d)), nir_u2u64(&b, stride)));
++      nir_def *grid = nir_build_load_global(&b, 3, 32, cmd_addr, .align_mul = 4);
++      nir_pop_if(&b, NULL);
++      grids[i] = nir_if_phi(&b, grid, no_grid);
++      own[i] = nir_imul(&b, nir_imul(&b, nir_channel(&b, grids[i], 0), nir_channel(&b, grids[i], 1)),
++                        nir_channel(&b, grids[i], 2));
++      acc = nir_uadd_sat(&b, acc, own[i]);
++      incl[i] = acc;
++   }
+ 
+-      /* Only the draws the count buffer has. */
+-      nir_def *all = nir_iadd(&b, first_draw, draws);
+-      nir_push_if(&b, nir_ine_imm(&b, count_addr, 0));
+-      nir_def *count = nir_umin(&b, nir_build_load_global(&b, 1, 32, count_addr, .align_mul = 4), all);
++   /* The invocations' sums, scanned in LDS. */
++   const struct glsl_type *sums_type = glsl_array_type(glsl_uint_type(), RADV_TASK_EMU_TABLE_THREADS, 4);
++   nir_variable *sums_var = nir_variable_create(b.shader, nir_var_mem_shared, sums_type, "sums");
++   nir_deref_instr *sums = nir_build_deref_var(&b, sums_var);
++
++   nir_def *scanned = acc;
++   nir_store_deref(&b, nir_build_deref_array(&b, sums, t), scanned, 0x1);
++   for (unsigned offset = 1; offset < RADV_TASK_EMU_TABLE_THREADS; offset <<= 1) {
++      nir_barrier(&b, .execution_scope = SCOPE_WORKGROUP, .memory_scope = SCOPE_WORKGROUP,
++                  .memory_semantics = NIR_MEMORY_ACQ_REL, .memory_modes = nir_var_mem_shared);
++      nir_def *other =
++         nir_load_deref(&b, nir_build_deref_array(&b, sums, nir_usub_sat(&b, t, nir_imm_int(&b, offset))));
++      other = nir_bcsel(&b, nir_uge(&b, t, nir_imm_int(&b, offset)), other, zero);
++      nir_barrier(&b, .execution_scope = SCOPE_WORKGROUP, .memory_scope = SCOPE_WORKGROUP,
++                  .memory_semantics = NIR_MEMORY_ACQ_REL, .memory_modes = nir_var_mem_shared);
++      scanned = nir_uadd_sat(&b, scanned, other);
++      nir_store_deref(&b, nir_build_deref_array(&b, sums, t), scanned, 0x1);
++   }
++   nir_barrier(&b, .execution_scope = SCOPE_WORKGROUP, .memory_scope = SCOPE_WORKGROUP,
++               .memory_semantics = NIR_MEMORY_ACQ_REL, .memory_modes = nir_var_mem_shared);
++   nir_def *before = nir_load_deref(&b, nir_build_deref_array(&b, sums, nir_usub_sat(&b, t, one)));
++   before = nir_bcsel(&b, nir_ieq_imm(&b, t, 0), zero, before);
++   nir_def *total =
++      nir_load_deref(&b, nir_build_deref_array(&b, sums, nir_imm_int(&b, RADV_TASK_EMU_TABLE_THREADS - 1)));
++
++   /* The table: past the group's draws, ends no workgroup reaches. */
++   nir_def *draws_addr = nir_iadd(&b, out_addr, nir_u2u64(&b, nir_ishl_imm(&b, search, 2)));
++   for (unsigned i = 0; i < per_thread_max; i++) {
++      nir_def *d = nir_iadd_imm(&b, base, i);
++      nir_push_if(&b, nir_iand(&b, nir_ult(&b, nir_imm_int(&b, i), per_thread), nir_ult(&b, d, search)));
++      {
++         nir_def *end = nir_bcsel(&b, nir_ult(&b, d, n), nir_uadd_sat(&b, before, incl[i]), none);
++         nir_def *first = nir_uadd_sat(&b, before, nir_isub(&b, incl[i], own[i]));
++         nir_build_store_global(&b, end, nir_iadd(&b, out_addr, nir_u2u64(&b, nir_ishl_imm(&b, d, 2))),
++                                .align_mul = 4);
++         nir_build_store_global(&b,
++                                nir_vec4(&b, nir_channel(&b, grids[i], 0), nir_channel(&b, grids[i], 1),
++                                         nir_channel(&b, grids[i], 2), first),
++                                nir_iadd(&b, draws_addr, nir_u2u64(&b, nir_ishl_imm(&b, d, 4))), .align_mul = 16);
++      }
+       nir_pop_if(&b, NULL);
+-      count = nir_if_phi(&b, count, all);
++   }
+ 
+-      nir_def *no_grid = nir_imm_zero(&b, 3, 32);
+-      nir_push_if(&b, nir_ult(&b, draw, count));
+-      nir_def *grid = nir_build_load_global(
+-         &b, 3, 32, nir_iadd(&b, indirect_addr, nir_imul(&b, nir_u2u64(&b, draw), nir_u2u64(&b, stride))),
+-         .align_mul = 4);
++   /* The chunks. */
++   nir_def *chunks_addr = nir_iadd(&b, out_addr, nir_u2u64(&b, nir_imul_imm(&b, search, RADV_TASK_EMU_TABLE_BYTES(1))));
++   for (unsigned j = 0; j < RADV_TASK_EMU_MAX_CHUNKS / RADV_TASK_EMU_TABLE_THREADS; j++) {
++      nir_def *k = nir_iadd_imm(&b, t, j * RADV_TASK_EMU_TABLE_THREADS);
++      nir_push_if(&b, nir_ult(&b, k, chunks));
++      {
++         nir_def *groups = nir_umin(&b, nir_usub_sat(&b, total, nir_imul(&b, k, entries)), entries);
++         nir_def *live = nir_b2i32(&b, nir_ine_imm(&b, groups, 0));
++         nir_def *records = nir_bcsel(&b, nir_ine_imm(&b, one_group, 0), live, nir_ushr_imm(&b, nir_iadd_imm(&b, groups, 31), 5));
++         nir_build_store_global(&b, nir_vec4(&b, groups, one, one, zero),
++                                nir_iadd(&b, chunks_addr, nir_u2u64(&b, nir_ishl_imm(&b, k, 4))), .align_mul = 16);
++         nir_build_store_global(
++            &b, nir_vec4(&b, records, one, one, zero),
++            nir_iadd(&b, chunks_addr, nir_u2u64(&b, nir_ishl_imm(&b, nir_iadd(&b, chunks, k), 4))), .align_mul = 16);
++         nir_build_store_global(
++            &b, live,
++            nir_iadd(&b, chunks_addr, nir_u2u64(&b, nir_iadd(&b, nir_ishl_imm(&b, chunks, 5), nir_ishl_imm(&b, k, 2)))),
++            .align_mul = 4);
++      }
+       nir_pop_if(&b, NULL);
+-      grid = nir_if_phi(&b, grid, no_grid);
+-
+-      nir_def *workgroups =
+-         nir_imul(&b, nir_imul(&b, nir_channel(&b, grid, 0), nir_channel(&b, grid, 1)), nir_channel(&b, grid, 2));
+-      nir_def *first = nir_imul(&b, chunk, entries);
+-      nir_def *groups = nir_umin(&b, nir_usub_sat(&b, workgroups, first), entries);
+-
+-      nir_def *block_addr = nir_iadd(&b, out_addr, nir_u2u64(&b, nir_imul_imm(&b, global_id, 32)));
+-      nir_build_store_global(&b, nir_vec4(&b, nir_channel(&b, grid, 0), nir_channel(&b, grid, 1),
+-                                          nir_channel(&b, grid, 2), draw),
+-                             block_addr, .align_mul = 16);
+-      nir_build_store_global(&b, nir_pad_vector_imm_int(&b, first, 0, 4), nir_iadd_imm(&b, block_addr, 16),
+-                             .align_mul = 16);
+-
+-      nir_def *args_addr = nir_iadd(&b, nir_iadd(&b, out_addr, nir_u2u64(&b, nir_imul_imm(&b, total, 32))),
+-                                    nir_u2u64(&b, nir_imul_imm(&b, global_id, 16)));
+-      nir_def *one = nir_imm_int(&b, 1);
+-      nir_build_store_global(&b, nir_vec4(&b, groups, one, one, nir_imm_int(&b, 0)), args_addr, .align_mul = 16);
+    }
+-   nir_pop_if(&b, NULL);
+ 
+    return b.shader;
+ }
+diff --git a/src/amd/vulkan/nir/radv_meta_nir.h b/src/amd/vulkan/nir/radv_meta_nir.h
+index 1bead4e8b68b31d37f5a898397beb5b8faa04703..4c4fb75c89612db9ba7e0f4040d2f92fb6211fc5 100644
+--- a/src/amd/vulkan/nir/radv_meta_nir.h
++++ b/src/amd/vulkan/nir/radv_meta_nir.h
+@@ -99,7 +99,7 @@ nir_shader *radv_meta_nir_build_clear_hiz_compute_shader(uint32_t samples);
+ 
+ nir_shader *radv_meta_nir_build_copy_memory_indirect_preprocess_cs(void);
+ nir_shader *radv_meta_nir_build_mesh_draw_records_cs(void);
+-nir_shader *radv_meta_nir_build_task_chunks_cs(void);
++nir_shader *radv_meta_nir_build_task_table_cs(void);
+ nir_shader *radv_meta_nir_build_copy_memory_indirect_cs(void);
+ 
+ nir_shader *radv_meta_nir_build_copy_memory_to_image_indirect_preprocess_cs(void);
+diff --git a/src/amd/vulkan/nir/radv_nir_lower_abi.c b/src/amd/vulkan/nir/radv_nir_lower_abi.c
+index bbbc20667fc42c02b16b71a27b99284f6d81dd88..9ba6d0ba412728ab9a3a9f35b9d7ca03d8a01972 100644
+--- a/src/amd/vulkan/nir/radv_nir_lower_abi.c
++++ b/src/amd/vulkan/nir/radv_nir_lower_abi.c
+@@ -609,49 +609,131 @@ lower_mesh_draw_record(nir_builder *b, nir_intrinsic_instr *intrin, void *state)
+ }
+ 
+ /* An emulated task shader's chunk (radv_task_emu_block): its workgroups are
+- * dispatched in one dimension from the chunk's first. */
+-static bool
+-lower_task_emulation(nir_builder *b, nir_intrinsic_instr *intrin, void *state)
+-{
+-   const lower_abi_state *s = state;
+-
+-   if (intrin->intrinsic != nir_intrinsic_load_num_workgroups && intrin->intrinsic != nir_intrinsic_load_draw_id &&
+-       intrin->intrinsic != nir_intrinsic_load_workgroup_id && intrin->intrinsic != nir_intrinsic_load_task_ring_entry_amd)
+-      return false;
++ * dispatched in one dimension from the chunk's first.
++ *
++ * A direct draw's chunk names the draw's grid. An indirect draw's chunk is a
++ * range of its group's workgroups taken draw after draw: a workgroup finds its
++ * draw in the group's table, the first whose end is past it, in
++ * RADV_TASK_EMU_SEARCH_BITS steps at most (uniform: scalar loads), and writes
++ * the draw's index to its mesh draw record, where the mesh shaders read it.
++ * The ring entry the shader adds its workgroup index to is then the draw's
++ * first workgroup in the group, so that a workgroup's entry is its index in
++ * the chunk, the chunk's first being a multiple of the ring's entries.
++ *
++ * What the shader reads is computed once, at its start.
++ */
++struct task_emu_values {
++   nir_def *grid, *draw_id, *workgroup_id, *ring_entry;
++};
+ 
+-   b->cursor = nir_before_instr(&intrin->instr);
++static void
++build_task_emu_values(nir_builder *b, const lower_abi_state *s, struct task_emu_values *v)
++{
++   static_assert(sizeof(struct radv_task_emu_block) == 32 && offsetof(struct radv_task_emu_block, draw_id) == 12 &&
++                    offsetof(struct radv_task_emu_block, first_workgroup) == 16 &&
++                    offsetof(struct radv_task_emu_block, search) == 20 &&
++                    offsetof(struct radv_task_emu_block, table) == 24 &&
++                    offsetof(struct radv_task_emu_block, records) == 28,
++                 "the loads below");
+ 
+    nir_def *block = nir_pack_64_2x32_split(b, ac_nir_load_arg(b, &s->args->ac, s->args->task_emu),
+                                            nir_imm_int(b, s->address32_hi));
+-   nir_def *grid = ac_nir_load_smem(b, 3, block, nir_imm_int(b, offsetof(struct radv_task_emu_block, grid)), 4,
+-                                    ACCESS_CAN_SPECULATE);
+-   nir_def *value;
++   nir_def *lo = ac_nir_load_smem(b, 4, block, nir_imm_int(b, 0), 16, ACCESS_CAN_SPECULATE);
++   nir_def *hi = ac_nir_load_smem(b, 4, block, nir_imm_int(b, 16), 16, ACCESS_CAN_SPECULATE);
++   nir_def *grid = nir_channels(b, lo, 0x7);
++   nir_def *draw_id = nir_channel(b, lo, 3);
++   nir_def *first = nir_channel(b, hi, 0);
++   nir_def *search = nir_channel(b, hi, 1);
++   nir_def *table = nir_channel(b, hi, 2);
++   nir_def *records = nir_channel(b, hi, 3);
++   nir_def *raw = ac_nir_load_arg(b, &s->args->ac, s->args->ac.workgroup_ids[0]);
++   nir_def *index = nir_iadd(b, first, raw);
++   nir_def *zero = nir_imm_int(b, 0);
++
++   nir_def *flat_grid, *flat_draw, *flat_local, *flat_first;
++   nir_push_if(b, nir_ine_imm(b, search, 0));
++   {
++      nir_def *table_addr = nir_pack_64_2x32_split(b, table, nir_imm_int(b, s->address32_hi));
++
++      /* The first draw whose end is past the workgroup: the ends only grow, and
++       * the table's last entry is past every workgroup of the group. */
++      nir_def *pos = zero;
++      for (int bit = RADV_TASK_EMU_SEARCH_BITS - 1; bit >= 0; bit--) {
++         const uint32_t step = 1u << bit;
++         nir_push_if(b, nir_ult(b, nir_imm_int(b, step), search));
++         nir_def *probe = nir_iadd_imm(b, pos, step - 1);
++         nir_def *end = ac_nir_load_smem(b, 1, table_addr, nir_ishl_imm(b, probe, 2), 4, 0);
++         nir_def *moved = nir_bcsel(b, nir_uge(b, index, end), nir_iadd_imm(b, pos, step), pos);
++         nir_pop_if(b, NULL);
++         pos = nir_if_phi(b, moved, pos);
++      }
+ 
+-   switch (intrin->intrinsic) {
+-   case nir_intrinsic_load_num_workgroups:
+-      value = grid;
+-      break;
+-   case nir_intrinsic_load_draw_id:
+-      value = ac_nir_load_smem(b, 1, block, nir_imm_int(b, offsetof(struct radv_task_emu_block, draw_id)), 4,
+-                               ACCESS_CAN_SPECULATE);
+-      break;
+-   case nir_intrinsic_load_task_ring_entry_amd:
+-      /* A chunk's first workgroup is a multiple of the ring's entries. */
+-      value = nir_imm_int(b, 0);
+-      break;
+-   default: {
+-      nir_def *first = ac_nir_load_smem(b, 1, block, nir_imm_int(b, offsetof(struct radv_task_emu_block, first_workgroup)),
+-                                        4, ACCESS_CAN_SPECULATE);
+-      nir_def *index = nir_iadd(b, first, ac_nir_load_arg(b, &s->args->ac, s->args->ac.workgroup_ids[0]));
+-      nir_def *x = nir_channel(b, grid, 0), *y = nir_channel(b, grid, 1);
+-      nir_def *plane = nir_imul(b, x, y);
+-      value = nir_vec3(b, nir_umod(b, index, x), nir_umod(b, nir_udiv(b, index, x), y), nir_udiv(b, index, plane));
+-      break;
++      nir_def *draw =
++         ac_nir_load_smem(b, 4, table_addr, nir_iadd(b, nir_ishl_imm(b, search, 2), nir_ishl_imm(b, pos, 4)), 16, 0);
++      flat_grid = nir_channels(b, draw, 0x7);
++      flat_first = nir_channel(b, draw, 3);
++      flat_local = nir_isub(b, index, flat_first);
++      flat_draw = nir_iadd(b, draw_id, pos);
++
++      /* The mesh shaders take their draw from the record of this workgroup's
++       * ring entry, its index in the chunk. */
++      nir_push_if(b, nir_ieq_imm(b, nir_load_local_invocation_index(b), 0));
++      {
++         nir_def *record = nir_iadd(b, records, nir_imul_imm(b, raw, sizeof(struct radv_mesh_draw_record)));
++         record = nir_iadd_imm(b, record, offsetof(struct radv_mesh_draw_record, task_draw_id));
++         nir_build_store_global(b, flat_draw, nir_pack_64_2x32_split(b, record, nir_imm_int(b, s->address32_hi)),
++                                .align_mul = 4);
++      }
++      nir_pop_if(b, NULL);
+    }
++   nir_pop_if(b, NULL);
++
++   v->grid = nir_if_phi(b, flat_grid, grid);
++   v->draw_id = nir_if_phi(b, flat_draw, draw_id);
++   v->ring_entry = nir_if_phi(b, flat_first, zero);
++   nir_def *local = nir_if_phi(b, flat_local, index);
++
++   nir_def *x = nir_channel(b, v->grid, 0), *y = nir_channel(b, v->grid, 1);
++   nir_def *plane = nir_imul(b, x, y);
++   v->workgroup_id = nir_vec3(b, nir_umod(b, local, x), nir_umod(b, nir_udiv(b, local, x), y), nir_udiv(b, local, plane));
++}
++
++static bool
++lower_task_emulation(nir_shader *shader, const lower_abi_state *s)
++{
++   nir_function_impl *impl = nir_shader_get_entrypoint(shader);
++   nir_builder b = nir_builder_at(nir_before_impl(impl));
++   struct task_emu_values v;
++
++   build_task_emu_values(&b, s, &v);
++
++   nir_foreach_block_safe (block, impl) {
++      nir_foreach_instr_safe (instr, block) {
++         if (instr->type != nir_instr_type_intrinsic)
++            continue;
++         nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
++         nir_def *value;
++         switch (intrin->intrinsic) {
++         case nir_intrinsic_load_num_workgroups:
++            value = v.grid;
++            break;
++         case nir_intrinsic_load_draw_id:
++            value = v.draw_id;
++            break;
++         case nir_intrinsic_load_workgroup_id:
++            value = v.workgroup_id;
++            break;
++         case nir_intrinsic_load_task_ring_entry_amd:
++            value = v.ring_entry;
++            break;
++         default:
++            continue;
++         }
++         nir_def_replace(&intrin->def, value);
++      }
+    }
+ 
+-   nir_def_replace(&intrin->def, value);
+-   return true;
++   return nir_progress(true, impl, nir_metadata_none);
+ }
+ 
+ /* A mesh shader's workgroup count from its draw's record
+@@ -670,7 +752,7 @@ radv_nir_lower_mesh_draw_records(nir_shader *shader, const struct radv_shader_st
+    };
+ 
+    if (shader->info.stage == MESA_SHADER_TASK && stage->args.task_emu.used)
+-      return nir_shader_intrinsics_pass(shader, lower_task_emulation, nir_metadata_control_flow, &state);
++      return lower_task_emulation(shader, &state);
+ 
+    if (shader->info.stage != MESA_SHADER_MESH || !stage->info.ms.draw_records)
+       return false;
+diff --git a/src/amd/vulkan/radv_cmd_buffer.c b/src/amd/vulkan/radv_cmd_buffer.c
+index 9bda3a889169e5538f12bfa70d41bc8b1075f0f8..193c3ae17b9e8323f8c9fb4e052e1d48d687878e 100644
+--- a/src/amd/vulkan/radv_cmd_buffer.c
++++ b/src/amd/vulkan/radv_cmd_buffer.c
+@@ -13937,7 +13937,7 @@ radv_split_cmd_stream_if_due(struct radv_cmd_buffer *cmd_buffer)
+    struct radv_cmd_state *state = &cmd_buffer->state;
+    struct radv_cmd_stream *cs = cmd_buffer->cs;
+ 
+-   if (likely(!device->ws->cs_split_due) || !device->ws->cs_split_due(cs->b))
++   if (likely(!device->ws->cs_split_due) || state->no_cs_split || !device->ws->cs_split_due(cs->b))
+       return;
+    if (state->streamout.streamout_enabled || state->streamout.hw_enabled_mask || state->cond_render.enabled ||
+        state->active_occlusion_queries || state->active_pipeline_queries || state->active_emulated_pipeline_queries ||
+@@ -15394,7 +15394,7 @@ radv_mesh_draw_records(struct radv_cmd_buffer *cmd_buffer, const struct radv_dra
+    const struct radeon_winsys_bo *ring = radv_cmd_buffer_device(cmd_buffer)->ms_publish_ring;
+    return radv_meta_mesh_draw_records(cmd_buffer, info->indirect_va, info->stride, info->count_va, info->count,
+                                       MAX2(mesh_shader->info.ms.prim_parts, 1),
+-                                      radv_ms_publishes(&mesh_shader->info) ? radv_buffer_get_va(ring) : 0, 0, 0, 0);
++                                      radv_ms_publishes(&mesh_shader->info) ? radv_buffer_get_va(ring) : 0, 0, 0, 0, 0);
+ }
+ 
+ /* Emulated task shaders (radv_task_emulated). A task draw goes in chunks of up
+@@ -15411,8 +15411,10 @@ radv_mesh_draw_records(struct radv_cmd_buffer *cmd_buffer, const struct radv_dra
+  * - the mesh workgroups' draw of those records.
+  *
+  * The next chunk waits for the mesh shaders, which read the rings. An indirect
+- * draw's chunks are counted in memory: all the chunks its task workgroup
+- * limit allows are recorded, those past its workgroups empty.
++ * draw's chunks (radv_task_emu_draw_indirect) take its draws' task workgroups
++ * one draw after the other, so that a chunk holds as many of its draws as fit
++ * and the chunks past them are empty, whatever the draw count the command
++ * names: what the GPU runs is what the count buffer and the draws hold.
+  */
+ struct radv_task_emu {
+    uint64_t rings_va; /* radv_task_emu_rings */
+@@ -15531,10 +15533,12 @@ radv_task_emu_dispatch(struct radv_cmd_buffer *cmd_buffer, const struct radv_tas
+ }
+ 
+ /* A chunk's mesh workgroups, from its draw ring's count entries or the count
+- * at count_va. */
++ * at count_va. draw_id is their task draw, UINT32_MAX when the task shaders
++ * wrote each record's; records_dispatch_va, when not 0, holds the workgroups
++ * of the records prepass (radv_meta_task_table). */
+ static void
+ radv_task_emu_draw_chunk(struct radv_cmd_buffer *cmd_buffer, const struct radv_task_emu *emu, uint32_t draw_id,
+-                         uint32_t count, uint64_t count_va)
++                         uint32_t count, uint64_t count_va, uint64_t records_dispatch_va)
+ {
+    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+    struct radv_cmd_stream *cs = cmd_buffer->cs;
+@@ -15544,7 +15548,7 @@ radv_task_emu_draw_chunk(struct radv_cmd_buffer *cmd_buffer, const struct radv_t
+ 
+    radv_meta_mesh_draw_records(cmd_buffer, emu->draw_ring_va, AC_TASK_DRAW_ENTRY_BYTES, count_va, count,
+                                MAX2(mesh_shader->info.ms.prim_parts, 1), publish_ring, emu->records_va,
+-                               (uint32_t)emu->rings_va, draw_id);
++                               (uint32_t)emu->rings_va, draw_id, records_dispatch_va);
+    radv_emit_cache_flush(cmd_buffer);
+ 
+    radeon_check_space(device->ws, cs->b, 64);
+@@ -15592,50 +15596,111 @@ radv_task_emu_draw_direct(struct radv_cmd_buffer *cmd_buffer, uint32_t x, uint32
+          }
+          radv_task_emu_dispatch(cmd_buffer, &emu, radv_buffer_get_va(cmd_buffer->upload.upload_bo) + offset, count,
+                                 0);
+-         radv_task_emu_draw_chunk(cmd_buffer, &emu, 0, count, 0);
++         radv_task_emu_draw_chunk(cmd_buffer, &emu, 0, count, 0, 0);
+       }
+    }
+    radv_task_emu_end(cmd_buffer);
+ }
+ 
++/* An indirect task draw, in groups of up to RADV_TASK_EMU_GROUP_DRAWS draws.
++ * For each group, a prepass (radv_meta_task_table) reads the count buffer and
++ * the group's draws and writes the group's table: each draw's grid and first
++ * task workgroup among the group's, the group's workgroups being its draws'
++ * one after the other. Then come the group's chunks, each the task workgroups
++ * from its first (a multiple of the rings' entries) as far as the rings hold:
++ * the task shaders find their draw in the table (radv_task_emu_block), and the
++ * prepass gave each chunk its task dispatch, the dispatch of its records
++ * prepass and its draw count, 0 past the group's workgroups. A draw command's
++ * cost is then what it draws, plus what its empty chunks cost, not its
++ * maxDrawCount times every chunk a draw could need.
++ *
++ * As many chunks are recorded as the group's own maximum needs (its draws
++ * times maxTaskWorkGroupTotalCount), up to the device's budget of task
++ * workgroups for a group (RADV_PS5_TASK_WORKGROUPS, maxTaskWorkGroupTotalCount
++ * by default: any one draw is whole) and to RADV_TASK_EMU_MAX_CHUNKS for the
++ * command. Workgroups past them are not drawn, which the first such command
++ * tells on stderr.
++ */
+ static void
+ radv_task_emu_draw_indirect(struct radv_cmd_buffer *cmd_buffer, const struct radv_draw_info *info)
+ {
+-   const struct radv_physical_device *pdev = radv_device_physical(radv_cmd_buffer_device(cmd_buffer));
++   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
++   const struct radv_physical_device *pdev = radv_device_physical(device);
++   const struct radv_shader *mesh_shader = cmd_buffer->state.shaders[MESA_SHADER_MESH];
+    const uint32_t view_mask = cmd_buffer->state.render.view_mask;
++   const uint32_t views = view_mask ? util_bitcount(view_mask) : 1;
+    struct radv_task_emu emu;
+ 
+    if (!radv_task_emu_begin(cmd_buffer, &emu))
+       return;
+ 
+-   /* Every chunk the task workgroup limit allows (maxTaskWorkGroupTotalCount),
+-    * set up for a batch of draws at a time. */
+-   const uint32_t chunks = DIV_ROUND_UP(1u << 22, emu.entries);
+-   const uint32_t batch = MAX2(4096 / chunks, 1);
++   const uint32_t groups = DIV_ROUND_UP(info->count, RADV_TASK_EMU_GROUP_DRAWS);
++   const uint32_t chunks_max = MAX2(RADV_TASK_EMU_MAX_CHUNKS / (groups * views), 1);
++   /* A publishing mesh shader's records prepass goes through the records in order. */
++   const bool one_group = radv_ms_publishes(&mesh_shader->info);
++
++   /* The chunks read the state the draw set and its prepasses' memory: a split
++    * between them would leave them the preamble's. */
++   cmd_buffer->state.no_cs_split = true;
++
++   for (uint32_t group = 0; group < groups; group++) {
++      const uint32_t first_draw = group * RADV_TASK_EMU_GROUP_DRAWS;
++      const uint32_t draws = MIN2(RADV_TASK_EMU_GROUP_DRAWS, info->count - first_draw);
++      const uint32_t search = util_next_power_of_two(draws);
++      const uint64_t most = (uint64_t)draws << 22; /* maxTaskWorkGroupTotalCount */
++      const uint64_t wanted = MIN2(most, device->task_emu_indirect_workgroups);
++      const uint32_t chunks = CLAMP(DIV_ROUND_UP(wanted, emu.entries), 1, chunks_max);
++
++      static uint32_t told;
++      if ((uint64_t)chunks * emu.entries < most && !p_atomic_xchg(&told, 1))
++         fprintf(stderr,
++                 "radv/ps5: an indirect task draw takes at most %llu task workgroups for each %u of its draws "
++                 "(RADV_PS5_TASK_WORKGROUPS); more are not drawn\n",
++                 (unsigned long long)chunks * emu.entries, RADV_TASK_EMU_GROUP_DRAWS);
++
++      unsigned offset;
++      if (!radv_cmd_buffer_upload_alloc_aligned(
++             cmd_buffer, RADV_TASK_EMU_TABLE_BYTES(search) + chunks * RADV_TASK_EMU_CHUNK_BYTES, 16, &offset, NULL)) {
++         vk_command_buffer_set_error(&cmd_buffer->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
++         break;
++      }
++      const uint64_t table_va = radv_buffer_get_va(cmd_buffer->upload.upload_bo) + offset;
++      radv_meta_task_table(cmd_buffer, info->indirect_va, info->stride, info->count_va, info->count, first_draw, draws,
++                           search, chunks, emu.entries, one_group, table_va);
+ 
+-   u_foreach_bit (view, view_mask ? view_mask : 1) {
+-      if (view_mask)
+-         radv_emit_view_index(pdev, &cmd_buffer->state, cmd_buffer->cs, view);
++      struct radv_task_emu_block *blocks;
++      if (!radv_cmd_buffer_upload_alloc(cmd_buffer, chunks * sizeof(*blocks), &offset, (void **)&blocks)) {
++         vk_command_buffer_set_error(&cmd_buffer->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
++         break;
++      }
++      const uint64_t blocks_va = radv_buffer_get_va(cmd_buffer->upload.upload_bo) + offset;
++      for (uint32_t i = 0; i < chunks; i++) {
++         blocks[i] = (struct radv_task_emu_block){
++            .draw_id = first_draw,
++            .first_workgroup = i * emu.entries,
++            .search = search,
++            .table = (uint32_t)table_va,
++            .records = (uint32_t)emu.records_va,
++         };
++      }
+ 
+-      for (uint32_t first_draw = 0; first_draw < info->count; first_draw += batch) {
+-         const uint32_t draws = MIN2(batch, info->count - first_draw);
+-         unsigned offset;
+-         if (!radv_cmd_buffer_upload_alloc_aligned(cmd_buffer, draws * chunks * 48, 16, &offset, NULL)) {
+-            vk_command_buffer_set_error(&cmd_buffer->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
+-            return;
+-         }
+-         const uint64_t out_va = radv_buffer_get_va(cmd_buffer->upload.upload_bo) + offset;
+-         radv_meta_task_chunks(cmd_buffer, info->indirect_va, info->stride, info->count_va, first_draw, draws,
+-                               chunks, emu.entries, out_va);
+-
+-         for (uint32_t i = 0; i < draws * chunks; i++) {
+-            const uint64_t block_va = out_va + i * sizeof(struct radv_task_emu_block);
+-            const uint64_t args_va = out_va + draws * chunks * sizeof(struct radv_task_emu_block) + i * 16;
+-            radv_task_emu_dispatch(cmd_buffer, &emu, block_va, 0, args_va);
+-            radv_task_emu_draw_chunk(cmd_buffer, &emu, first_draw + i / chunks, emu.entries, args_va);
++      /* What the prepass wrote is read from here on. */
++      radv_emit_cache_flush(cmd_buffer);
++
++      u_foreach_bit (view, view_mask ? view_mask : 1) {
++         if (view_mask)
++            radv_emit_view_index(pdev, &cmd_buffer->state, cmd_buffer->cs, view);
++
++         for (uint32_t i = 0; i < chunks; i++) {
++            const uint64_t dispatch_va = table_va + RADV_TASK_EMU_DISPATCH(search, i);
++            radv_task_emu_dispatch(cmd_buffer, &emu, blocks_va + i * sizeof(*blocks), 0, dispatch_va);
++            radv_task_emu_draw_chunk(cmd_buffer, &emu, UINT32_MAX, emu.entries, dispatch_va,
++                                     table_va + RADV_TASK_EMU_RECORDS_DISPATCH(search, chunks, i));
+          }
+       }
+    }
++
++   cmd_buffer->state.no_cs_split = false;
+    radv_task_emu_end(cmd_buffer);
+ }
+ 
+diff --git a/src/amd/vulkan/radv_cmd_buffer.h b/src/amd/vulkan/radv_cmd_buffer.h
+index 93d3af3248faa04dd24bfa7631c03fb712df6f88..0bf0b92b47337cd6ad095df788323d962603aac2 100644
+--- a/src/amd/vulkan/radv_cmd_buffer.h
++++ b/src/amd/vulkan/radv_cmd_buffer.h
+@@ -432,6 +432,11 @@ struct radv_cmd_state {
+    /* Whether DRAW_{INDEX}_INDIRECT_{MULTI} is emitted. */
+    bool uses_draw_indirect;
+ 
++   /* An emulated indirect task draw is being recorded (radv_task_emu_draw_indirect):
++    * the stream is not split until it ends, its chunks reading state it set and
++    * the command processor skipping words over them. */
++   bool no_cs_split;
++
+    struct radv_ia_multi_vgt_param_helpers ia_multi_vgt_param;
+ 
+    /* Tessellation info when patch control points is dynamic. */
+diff --git a/src/amd/vulkan/radv_constants.h b/src/amd/vulkan/radv_constants.h
+index c57894c6984a36ee7706ca64bb8de6cdc56970d8..115e169437496943fd166ec8425c13c4d20890d3 100644
+--- a/src/amd/vulkan/radv_constants.h
++++ b/src/amd/vulkan/radv_constants.h
+@@ -72,6 +72,17 @@
+ #define RADV_TASK_EMU_DRAW_RING_OFFSET (RADV_TASK_EMU_MAX_ENTRIES * 64u)
+ #define RADV_TASK_EMU_PAYLOAD_OFFSET   (RADV_TASK_EMU_DRAW_RING_OFFSET + RADV_TASK_EMU_MAX_ENTRIES * 16u)
+ #define RADV_TASK_EMU_BYTES            (RADV_TASK_EMU_PAYLOAD_OFFSET + RADV_TASK_EMU_PAYLOAD_BYTES)
++
++/* An emulated indirect task draw (radv_task_emu_draw_indirect) takes its
++ * draws in groups of up to RADV_TASK_EMU_GROUP_DRAWS, each group's task
++ * workgroups in draw order through chunks of the rings' entries; a task
++ * workgroup finds its draw in the group's table with RADV_TASK_EMU_SEARCH_BITS
++ * steps. One draw command records at most RADV_TASK_EMU_MAX_CHUNKS chunks, so
++ * its words stay well inside one AGC submission. */
++#define RADV_TASK_EMU_GROUP_DRAWS      4096u
++#define RADV_TASK_EMU_SEARCH_BITS      12u
++#define RADV_TASK_EMU_TABLE_THREADS    512u
++#define RADV_TASK_EMU_MAX_CHUNKS       1024u
+ #define RING_MS_SCRATCH          9
+ #define RING_PS_ATTR             10
+ #define RING_PS_SAMPLE_POSITIONS 11
+diff --git a/src/amd/vulkan/radv_device.c b/src/amd/vulkan/radv_device.c
+index 89d672875068940f6e85d964703945aeffcfd8a5..57b2be5a888b5cf2ba04f7bfe61abc4123ea7c8f 100644
+--- a/src/amd/vulkan/radv_device.c
++++ b/src/amd/vulkan/radv_device.c
+@@ -1739,6 +1739,10 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
+       result = device->ws->buffer_make_resident(device->ws, device->task_emu_bo, true);
+       if (result != VK_SUCCESS)
+          goto fail;
++
++      /* A single draw's own maximum, whatever its group's other draws. */
++      device->task_emu_indirect_workgroups =
++         CLAMP(debug_get_num_option("RADV_PS5_TASK_WORKGROUPS", 1u << 22), 1, 1u << 26);
+    }
+ 
+    if (pdev->info.has_graphics && !(instance->debug_flags & RADV_DEBUG_NO_IB_CHAINING))
+diff --git a/src/amd/vulkan/radv_device.h b/src/amd/vulkan/radv_device.h
+index 0dd29356a2d2eb74981d2bcbd44a77098c3fa75b..4c3f13167ad16f1a3350744d07624696494a3393 100644
+--- a/src/amd/vulkan/radv_device.h
++++ b/src/amd/vulkan/radv_device.h
+@@ -186,6 +186,10 @@ struct radv_device {
+     * records, its task draw ring and its task payload ring, one chunk at a
+     * time (RADV_TASK_EMU_*). */
+    struct radeon_winsys_bo *task_emu_bo;
++   /* The task workgroups an emulated indirect task draw's group of draws takes
++    * at most (RADV_PS5_TASK_WORKGROUPS, maxTaskWorkGroupTotalCount by default):
++    * as many chunks are recorded. */
++   uint32_t task_emu_indirect_workgroups;
+ 
+    struct radeon_winsys_bo *trace_bo;
+    struct radv_trace_data *trace_data;
+diff --git a/src/amd/vulkan/radv_shader.h b/src/amd/vulkan/radv_shader.h
+index 58e6ea70c05d6698cc6efc62466a83d820ce86c6..8a921a584277611b2033a10ee132408df1a36938 100644
+--- a/src/amd/vulkan/radv_shader.h
++++ b/src/amd/vulkan/radv_shader.h
+@@ -303,16 +303,46 @@ struct radv_mesh_draw_record {
+ };
+ 
+ /* An emulated task draw's chunk (radv_task_emulated), which its task shader
+- * reads: the task workgroup grid, the draw's index, and the first of the
+- * draw's task workgroups in this chunk, in x, then y, then z order. The chunk
+- * dispatches its workgroups in one dimension. */
++ * reads. The chunk dispatches its workgroups in one dimension.
++ *
++ * A direct draw's chunk (search 0): the task workgroup grid, the draw's index,
++ * and the first of the draw's task workgroups in this chunk, in x, then y,
++ * then z order.
++ *
++ * An indirect draw's chunk (search not 0): a range of its group's task
++ * workgroups, the group's draws one after the other (radv_task_emu_draw_indirect).
++ * draw_id is the group's first draw and first_workgroup the chunk's first
++ * workgroup among the group's. Each workgroup finds its draw in the group's
++ * table (radv_task_emu_table, search entries) and writes the draw's index to
++ * its mesh draw record (records, radv_mesh_draw_record.task_draw_id).
++ */
+ struct radv_task_emu_block {
+    uint32_t grid[3];
+    uint32_t draw_id;
+    uint32_t first_workgroup;
+-   uint32_t pad[3];
++   uint32_t search;  /* a power of two, the table's entries; 0 for a direct draw */
++   uint32_t table;   /* in the 32-bit window */
++   uint32_t records; /* in the 32-bit window */
+ };
+ 
++/* An emulated indirect task draw's group of draws (radv_meta_task_table), at
++ * table, search entries each:
++ *
++ *    uint32_t end[search];   the draw's last task workgroup + 1 among the
++ *                            group's, UINT32_MAX past the group's draws
++ *    struct { uint32_t grid[3], first; } draw[search];
++ *
++ * then, for each of the group's chunks: its task dispatch (groups, 1, 1, 0),
++ * its records prepass dispatch (radv_meta_mesh_draw_records) and a word that
++ * is not 0 when the chunk has workgroups.
++ */
++#define RADV_TASK_EMU_TABLE_BYTES(search)   ((search) * 20u)
++#define RADV_TASK_EMU_CHUNK_BYTES           36u
++#define RADV_TASK_EMU_DISPATCH(search, i)   (RADV_TASK_EMU_TABLE_BYTES(search) + (i) * 16u)
++#define RADV_TASK_EMU_RECORDS_DISPATCH(search, chunks, i) \
++   (RADV_TASK_EMU_TABLE_BYTES(search) + (chunks) * 16u + (i) * 16u)
++#define RADV_TASK_EMU_LIVE(search, chunks, i) (RADV_TASK_EMU_TABLE_BYTES(search) + (chunks) * 32u + (i) * 4u)
++
+ /* The task rings of an emulated task draw (radv_task_emulated): the ring
+  * table the shaders read RING_TS_DRAW and RING_TS_PAYLOAD from, entries sized
+  * to the pipeline's payload. */

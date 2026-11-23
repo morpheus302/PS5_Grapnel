@@ -1,0 +1,188 @@
+Subject: [PATCH 3/7] radv/ps5: the command processor skips an emulated indirect task draw's empty chunks
+
+With its draws' task workgroups one draw after the other (the previous
+change), an emulated indirect task draw's chunks past its workgroups are all
+empty, but each still costs its task dispatch, records prepass and draw and
+the waits between them, about 0.8 us on the console. A command records as
+many chunks as maxTaskWorkGroupTotalCount (or the RADV_PS5_TASK_WORKGROUPS
+budget) needs: 64 at a 256-byte payload, 256 at 3,200 bytes, 1,024 at
+16 KiB.
+
+The chunks now go in blocks of 1, 1, 2, 4 ... chunks, at most 1,024 words
+each. A block starts with a COND_EXEC of its first chunk's live word, which
+the table prepass writes 0 when the chunk has no workgroups; the COND_EXEC
+skips the whole block then, every later chunk being empty too. Blocks
+follow one another: no COND_EXEC lies in the words another one skips. A
+block that passed 1,024 words all the same, or that the stream grew in the
+middle of, has its packet turned into a NOP and its chunks run empty, as
+before. The stream is not split while the draw is recorded, so a block
+never straddles two AGC submissions. The PFP reads the first live word
+after the cache flush that waits for the prepass (ACQUIRE_MEM in the PFP).
+
+The graphics ring's prefetch parser had only run small COND_EXECs one after
+the other (radv_update_zrange_precision's 3-word skip). A first version of
+this change nested them, a chunk's COND_EXEC skipping to the end of a nest
+of up to 128 chunks (up to about 14,000 words, each nest's COND_EXECs inside
+the first one's skip): its console run drew every case right, then the
+console stopped answering about a minute after the title ended, which the
+run without COND_EXEC did not do. Hence blocks that never nest and stay
+small.
+
+RADV_PS5_TASK_COND_EXEC=0 turns it off.
+
+(cherry picked from commit 662b28af6d492032bd010452b44f0674b4cf103a)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+---
+ src/amd/vulkan/radv_cmd_buffer.c | 84 ++++++++++++++++++++++++++++++++++++++++
+ src/amd/vulkan/radv_device.c     |  1 +
+ src/amd/vulkan/radv_device.h     |  3 ++
+ 3 files changed, 88 insertions(+)
+
+diff --git a/src/amd/vulkan/radv_cmd_buffer.c b/src/amd/vulkan/radv_cmd_buffer.c
+index 193c3ae17b9e8323f8c9fb4e052e1d48d687878e..79d5e0ac1852c58aa3c1954b8af303a60da40af9 100644
+--- a/src/amd/vulkan/radv_cmd_buffer.c
++++ b/src/amd/vulkan/radv_cmd_buffer.c
+@@ -15602,6 +15602,72 @@ radv_task_emu_draw_direct(struct radv_cmd_buffer *cmd_buffer, uint32_t x, uint32
+    radv_task_emu_end(cmd_buffer);
+ }
+ 
++/* An emulated indirect task draw's chunks go in blocks the command processor
++ * skips when they are empty (radv_task_emu_draw_indirect): a block starts with
++ * a COND_EXEC of its first chunk's live word, which skips the whole block when
++ * the word is 0, every later chunk being empty too. Blocks hold 1, 1, 2, 4 ...
++ * chunks and at most RADV_TASK_EMU_SKIP_WORDS words, and never hold another
++ * COND_EXEC: the graphics ring's prefetch parser had only run small COND_EXECs
++ * one after the other (radv_update_zrange_precision's), and a run with nested
++ * ones up to 14,000 words long was followed by the console's loss. A block that
++ * passed the limit all the same, or that the stream grew in the middle of,
++ * keeps its packet as a NOP, its chunks running empty as without the skips.
++ */
++#define RADV_TASK_EMU_SKIP_WORDS 1024u
++
++struct radv_task_emu_skip {
++   uint32_t *packet; /* the open block's COND_EXEC, NULL when none is open */
++   const uint32_t *buf;
++   uint32_t start;       /* the open block's first word */
++   uint32_t chunks;      /* the chunks it holds */
++   uint32_t most;        /* the chunks it may hold */
++   uint32_t blocks;      /* the blocks of this run of chunks so far */
++   uint32_t chunk_words; /* the most words a chunk took */
++};
++
++static void
++radv_task_emu_skip_close(struct radv_cmd_buffer *cmd_buffer, struct radv_task_emu_skip *skip)
++{
++   const struct ac_cmdbuf *cs = cmd_buffer->cs->b;
++
++   if (!skip->packet)
++      return;
++   const uint32_t words = cs->cdw - skip->start;
++   if (cs->buf == skip->buf && words <= RADV_TASK_EMU_SKIP_WORDS)
++      skip->packet[4] = words;
++   else
++      skip->packet[0] = PKT3(PKT3_NOP, 3, 0);
++   skip->packet = NULL;
++}
++
++/* Before a chunk whose live word is at live_va. */
++static void
++radv_task_emu_skip_chunk(struct radv_cmd_buffer *cmd_buffer, struct radv_task_emu_skip *skip, uint64_t live_va)
++{
++   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
++   const struct radv_physical_device *pdev = radv_device_physical(device);
++   struct ac_cmdbuf *cs = cmd_buffer->cs->b;
++   const uint32_t next = skip->chunk_words ? skip->chunk_words + 64 : 512;
++
++   if (skip->packet && (skip->chunks == skip->most || cs->buf != skip->buf ||
++                        cs->cdw - skip->start + next > RADV_TASK_EMU_SKIP_WORDS))
++      radv_task_emu_skip_close(cmd_buffer, skip);
++
++   if (!skip->packet) {
++      /* Room for the whole block, so that the stream does not grow in it. */
++      radeon_check_space(device->ws, cs, 2 * RADV_TASK_EMU_SKIP_WORDS);
++      assert(pdev->info.gfx_level >= GFX7);
++      skip->buf = cs->buf;
++      skip->packet = cs->buf + cs->cdw;
++      ac_emit_cp_cond_exec(cs, pdev->info.gfx_level, live_va, 0);
++      skip->start = cs->cdw;
++      skip->chunks = 0;
++      skip->most = skip->blocks < 2 ? 1 : 1u << MIN2(skip->blocks - 1, 16);
++      skip->blocks++;
++   }
++   skip->chunks++;
++}
++
+ /* An indirect task draw, in groups of up to RADV_TASK_EMU_GROUP_DRAWS draws.
+  * For each group, a prepass (radv_meta_task_table) reads the count buffer and
+  * the group's draws and writes the group's table: each draw's grid and first
+@@ -15620,6 +15686,10 @@ radv_task_emu_draw_direct(struct radv_cmd_buffer *cmd_buffer, uint32_t x, uint32
+  * by default: any one draw is whole) and to RADV_TASK_EMU_MAX_CHUNKS for the
+  * command. Workgroups past them are not drawn, which the first such command
+  * tells on stderr.
++ *
++ * Unless RADV_PS5_TASK_COND_EXEC=0, the command processor skips the empty
++ * chunks a block at a time (radv_task_emu_skip): a command whose draws fit one
++ * chunk costs about one chunk, the prepass and a COND_EXEC a block.
+  */
+ static void
+ radv_task_emu_draw_indirect(struct radv_cmd_buffer *cmd_buffer, const struct radv_draw_info *info)
+@@ -15638,6 +15708,7 @@ radv_task_emu_draw_indirect(struct radv_cmd_buffer *cmd_buffer, const struct rad
+    const uint32_t chunks_max = MAX2(RADV_TASK_EMU_MAX_CHUNKS / (groups * views), 1);
+    /* A publishing mesh shader's records prepass goes through the records in order. */
+    const bool one_group = radv_ms_publishes(&mesh_shader->info);
++   struct radv_task_emu_skip skip = {0};
+ 
+    /* The chunks read the state the draw set and its prepasses' memory: a split
+     * between them would leave them the preamble's. */
+@@ -15693,10 +15764,23 @@ radv_task_emu_draw_indirect(struct radv_cmd_buffer *cmd_buffer, const struct rad
+ 
+          for (uint32_t i = 0; i < chunks; i++) {
+             const uint64_t dispatch_va = table_va + RADV_TASK_EMU_DISPATCH(search, i);
++            const struct ac_cmdbuf *cs = cmd_buffer->cs->b;
++
++            if (device->task_emu_cond_exec)
++               radv_task_emu_skip_chunk(cmd_buffer, &skip, table_va + RADV_TASK_EMU_LIVE(search, chunks, i));
++
++            const uint32_t *chunk_buf = cs->buf;
++            const uint32_t chunk_start = cs->cdw;
+             radv_task_emu_dispatch(cmd_buffer, &emu, blocks_va + i * sizeof(*blocks), 0, dispatch_va);
+             radv_task_emu_draw_chunk(cmd_buffer, &emu, UINT32_MAX, emu.entries, dispatch_va,
+                                      table_va + RADV_TASK_EMU_RECORDS_DISPATCH(search, chunks, i));
++            if (cs->buf == chunk_buf)
++               skip.chunk_words = MAX2(skip.chunk_words, cs->cdw - chunk_start);
+          }
++
++         /* The next view's or group's chunks start blocks of their own. */
++         radv_task_emu_skip_close(cmd_buffer, &skip);
++         skip.blocks = 0;
+       }
+    }
+ 
+diff --git a/src/amd/vulkan/radv_device.c b/src/amd/vulkan/radv_device.c
+index 57b2be5a888b5cf2ba04f7bfe61abc4123ea7c8f..ff788e70f28edc7044c3d38276bfe08fc557c409 100644
+--- a/src/amd/vulkan/radv_device.c
++++ b/src/amd/vulkan/radv_device.c
+@@ -1743,6 +1743,7 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
+       /* A single draw's own maximum, whatever its group's other draws. */
+       device->task_emu_indirect_workgroups =
+          CLAMP(debug_get_num_option("RADV_PS5_TASK_WORKGROUPS", 1u << 22), 1, 1u << 26);
++      device->task_emu_cond_exec = debug_get_bool_option("RADV_PS5_TASK_COND_EXEC", true);
+    }
+ 
+    if (pdev->info.has_graphics && !(instance->debug_flags & RADV_DEBUG_NO_IB_CHAINING))
+diff --git a/src/amd/vulkan/radv_device.h b/src/amd/vulkan/radv_device.h
+index 4c3f13167ad16f1a3350744d07624696494a3393..cdfb8192b14fc200bd2c432964d8ae420f15d958 100644
+--- a/src/amd/vulkan/radv_device.h
++++ b/src/amd/vulkan/radv_device.h
+@@ -190,6 +190,9 @@ struct radv_device {
+     * at most (RADV_PS5_TASK_WORKGROUPS, maxTaskWorkGroupTotalCount by default):
+     * as many chunks are recorded. */
+    uint32_t task_emu_indirect_workgroups;
++   /* Whether the command processor skips an emulated indirect task draw's
++    * empty chunks (COND_EXEC, RADV_PS5_TASK_COND_EXEC). */
++   bool task_emu_cond_exec;
+ 
+    struct radeon_winsys_bo *trace_bo;
+    struct radv_trace_data *trace_data;

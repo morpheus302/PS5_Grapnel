@@ -1,0 +1,13 @@
+# Grapnel builder's Python packages (Python 3.12 or newer: numpy 2.5 asks for it):
+#   python3 -m venv ~/grapnel-venv && ~/grapnel-venv/bin/pip install -r scripts/grapnel-builder/requirements.txt
+# The translator's (the repository's requirements.txt without unicorn, which only its tests use)
+lz4==4.4.5
+numpy==2.5.4
+capstone==5.0.9
+zstandard==0.25.0
+# The button icons' (nx2/prompt_requirements.txt)
+fonttools==4.68.0
+pillow==13.0.0
+astc-encoder-py==0.1.12
+archspec==0.2.7
+texture2ddecoder==1.0.6
