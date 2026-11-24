@@ -36,10 +36,13 @@ Grapnel is published before it is finished, so that others can help.
   programs while you play: stutters, and memory that does not come back. In a crowded place this can make the title close
   itself (below). That is why the builder **prepares the shaders on your PC** (about 15 minutes): the console finds them in
   its driver's cache from the first start and prepares nothing; only a pipeline no list knows is still compiled in play.
-- **Long sessions can end at a change of place.** After 20 to 25 minutes of play, the memory the game holds has grown, and
-  the burst of textures loaded when entering a crowded place (Castle Town from Hyrule Field, Kakariko) can leave too little:
-  the title then closes itself. Start it again: your save is as you left it. Making that memory last is the other big piece
-  of work left.
+- **Long sessions can end at a change of place.** As you play, the memory the game holds grows, and the burst of textures
+  loaded when entering a crowded place (Castle Town from Hyrule Field, Kakariko) can leave too little: the title then closes
+  itself. Start it again: your save is as you left it. Since 0.2.1 the shaders the console reads from its cache are kept
+  compressed (lazy shader modules and freed packed SPIR-V, from rimidalv333's
+  [Longshot Oberon](https://github.com/rimidalv333/longshot-oberon)): about 290 MB more free memory (their SPIR-V in 105 MB
+  instead of 396), and a player's session ran **36 minutes without closing**, against about 25 before. Making that memory
+  last is the other big piece of work left.
 - The title watches its own memory: when the console's free memory gets too low, it closes itself and says so in its log,
   rather than let the console run out (early builds could power the whole console off that way).
 - Longshot's PC-only tools (bug reports, pipeline lists) are not on the console.
@@ -48,22 +51,23 @@ Grapnel is published before it is finished, so that others can help.
 
 - A **jailbroken PS5** (tried on firmware 12.60 only) with **kstuff**, an **ELF loader listening on port 9021** (elfldr),
   and **[ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus) 1.7beta3 or newer** (1.7beta11 tried), which lets the
-  title see `/data` and registers it.
+  title see `/data` and registers it; **1.7beta4 or newer** to install it on an extension disk (it then lets the title see
+  that disk too).
 - Your local network between the PC and the console: the builder's window can send the title itself (step 6, over FTP), or
   copy it yourself (an FTP server, for example).
 - **Your own copy of the game**, dumped from your own console, as a `.nup` file (game version 131072). About 26 GB.
 - **A PC with Windows 10 or 11 (64-bit), or Linux on x86-64**, for the builder, with a processor that has AVX2 (x86-64-v3):
   8 GB of memory at the least (16 GB is much faster), about 12 GB of free disk space besides the game file.
-  - **Windows:** `Grapnel-Builder-0.2.0-windows-x64.zip` from this repository's
+  - **Windows:** `Grapnel-Builder-0.2.1-windows-x64.zip` from this repository's
     [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) page: a folder with everything in it (its LLVM, Python,
     the console toolchain), nothing to install.
   - **Linux:** **LLVM 19.1.7**, git and Python 3.12 or newer, and **the console toolchain**,
-    `grapnel-toolchain-0.3-linux-x64.tar.xz`, from the same page (the console's SDK, linker parts, driver, the shaders'
+    `grapnel-toolchain-0.3.1-linux-x64.tar.xz`, from the same page (the console's SDK, linker parts, driver, the shaders'
     preparation and the FTP server step 6 can send; no game file in it).
 
 ### Build it on Windows
 
-1. Unpack the whole `Grapnel-Builder-0.2.0-windows-x64.zip` (right click, "Extract All...") into a folder of yours with a
+1. Unpack the whole `Grapnel-Builder-0.2.1-windows-x64.zip` (right click, "Extract All...") into a folder of yours with a
    short path, `C:\Grapnel-Builder` for instance. Nothing to install, no administrator rights.
 2. Start `Grapnel.exe`. It is not signed: if Windows says "Windows protected your PC", click **More info**, then **Run
    anyway**. An antivirus may scan or block the builder's programs (`clang.exe`, `ld.lld.exe`, `zbic_unpack.exe`,
@@ -75,13 +79,23 @@ Grapnel is published before it is finished, so that others can help.
 4. Step 6 takes the console's IP address. It sends over FTP: the console's FTP server if one answers (port 2121), else
    [ftpsrv](https://github.com/ps5-payload-dev/ftpsrv) (GPL-3.0), which it sends to the console's ELF loader (port 9021).
    It first copies your saves to the PC (`console-saves\` in the output folder), asks before it replaces anything, touches
-   only `/data/homebrew/GRPN00001` and `/data/grapnel`, sends the game file only when the console does not have it, carries
-   on where a cut send stopped, and reads the sizes and the eboot's CRC32 back. ShadowMountPlus then registers the title.
+   only the title's folder, the game file's folder and `/data/grapnel`, sends the game file only when the console does not
+   have it, carries on where a cut send stopped, and reads the sizes and the eboot's CRC32 back. ShadowMountPlus then
+   registers the title.
+5. Step 6 installs on the console's **internal storage** or on its **extension disk** (`/mnt/ext1`, found by itself). On
+   the disk the title goes to `/mnt/ext1/homebrew/GRPN00001` and the game file to `/mnt/ext1/grapnel/game.nup`; your saves,
+   settings and logs stay in `/data/grapnel`, and the `hookshot_env.txt` sent there says where the game file is
+   (`HOOKSHOT_PS5_NUP=/mnt/ext1/grapnel/game.nup`). It never touches the disk's other games. A title or a game file left
+   at the other place is removed only if you say yes, once the send is read back.
 
 On a Ryzen 5 3600X with 16 GB (a player's PC, Windows 11), two builds: the translation 155 and 266 s, the compile 1,980 and
 2,066 s (33 and 34 min), the shaders' preparation 1,318 and 2,839 s (22 and 47 min, its check included). The `eboot.bin` and the shader cache it made are the Linux builder's, byte
 for byte: the same CRC32 for the eboot, the same 57,210 keys and contents for the cache. `Grapnel-console.cmd` runs the same
 build without the window. The window's "Copy the report" gives what to send with a problem.
+
+If the shaders' preparation hits a fault in the process's own memory (seen once in a while under Wine, never on Windows so
+far), the run ends, the fault is written in its log, and the builder starts it again where it stopped; before 0.2.1 such a
+fault could make it leave a program out, or wait for ever.
 
 ### Build it on Linux
 
@@ -94,9 +108,9 @@ the builder's Python environment (`~/grapnel-venv`, from `scripts/grapnel-builde
 unpack the toolchain, then, in the repository's folder:
 
 ```bash
-~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3-linux-x64
+~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3.1-linux-x64
 ~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --nup "$HOME/<your game>.nup" --out ~/grapnel-out \
-    --toolchain ~/grapnel-toolchain-0.3-linux-x64
+    --toolchain ~/grapnel-toolchain-0.3.1-linux-x64
 ```
 
 - `--check` needs no game: it looks at everything the build needs (its Python packages, LLVM 19.1.7, the console
@@ -132,6 +146,10 @@ The window's step 6 does steps 1 and 2 over FTP (see [Build it on Windows](#buil
    icon and pictures when it is registered: the home screen copies them then), then start **Grapnel** from the home screen.
 4. Keep the ELF loader running: at start the title sends its storage broker to it (port 9021), which makes its large
    writes fast. Without it the log says `elf loader unavailable` and the title writes by itself, more slowly.
+
+**On an extension disk** (ShadowMountPlus 1.7beta4 or newer): the title folder goes to `/mnt/ext1/homebrew/GRPN00001/` and
+the game file to `/mnt/ext1/grapnel/game.nup`; `data/grapnel/` still goes to `/data/grapnel/`, and its `hookshot_env.txt`
+gets the line `HOOKSHOT_PS5_NUP=/mnt/ext1/grapnel/game.nup`.
 
 The settings file the builder puts in `/data/grapnel/` is the repository's
 [`ps5/hookshot_env.default.txt`](../ps5/hookshot_env.default.txt) (with [`ps5/skip.txt`](../ps5/skip.txt) beside it): copy
@@ -221,8 +239,8 @@ dated, is in [docs/grapnel-changes.md](../docs/grapnel-changes.md).
 
 Longshot and Hookshot and everyone they credit; mihawk-99's PS5 stack (PS5_Mesa, PS5_Vulkan, PS5_PayloadSDK,
 PS5_VulkanTemplate, PS5_MihawkGen); ps5-payload-dev's SDK; heydemoura's PS5_Longshot, the model for the builder;
-bizkut; Eden and suyu; Kenney (CC0); Dear ImGui and the other parts. All of them, and what each brought:
-[CREDITS.md](../CREDITS.md).
+bizkut; rimidalv333's Longshot Oberon (the lazy shader modules); Eden and suyu; Kenney (CC0); Dear ImGui and the other
+parts. All of them, and what each brought: [CREDITS.md](../CREDITS.md).
 
 ### Not affiliated
 
@@ -261,10 +279,13 @@ Grapnel est publié avant d'être fini, pour que d'autres puissent aider.
   titre peut alors se fermer de lui-même (ci-dessous). C'est pourquoi le constructeur **prépare les shaders sur votre PC**
   (environ 15 minutes) : la console les trouve dans le cache de son pilote dès le premier lancement et ne prépare rien ; seul un
   pipeline qu'aucune liste ne connaît est encore compilé en jouant.
-- **Une longue partie peut s'arrêter à un changement de lieu.** Après 20 à 25 minutes de jeu, la mémoire prise par le jeu
-  a grandi, et la rafale de textures chargées en entrant dans un lieu chargé (la citadelle depuis la plaine, le village
-  Cocorico) peut en laisser trop peu : le titre se ferme alors de lui-même. Relancez-le : votre sauvegarde est telle que vous
-  l'avez laissée. Faire durer cette mémoire est l'autre grand chantier restant.
+- **Une longue partie peut s'arrêter à un changement de lieu.** Au fil du jeu, la mémoire prise par le jeu grandit, et la
+  rafale de textures chargées en entrant dans un lieu chargé (la citadelle depuis la plaine, le village Cocorico) peut en
+  laisser trop peu : le titre se ferme alors de lui-même. Relancez-le : votre sauvegarde est telle que vous l'avez laissée.
+  Depuis la 0.2.1, les shaders que la console lit dans son cache sont gardés compressés (modules de shaders paresseux et
+  SPIR-V compressé libéré, repris de [Longshot Oberon](https://github.com/rimidalv333/longshot-oberon) de rimidalv333) :
+  environ 290 Mo de mémoire libre en plus (leur SPIR-V tient en 105 Mo au lieu de 396), et la partie d'un joueur a duré
+  **36 minutes sans fermeture**, contre 25 environ avant. Faire durer cette mémoire est l'autre grand chantier restant.
 - Le titre surveille sa mémoire : quand la mémoire libre de la console devient trop basse, il se ferme et le dit dans son
   journal, plutôt que de laisser la console en manquer (les premières versions pouvaient éteindre toute la console).
 - Les outils de Longshot réservés au PC (rapports de bogue, listes de pipelines) ne sont pas sur la console.
@@ -273,22 +294,23 @@ Grapnel est publié avant d'être fini, pour que d'autres puissent aider.
 
 - Une **PS5 débridée** (essayée en firmware 12.60 seulement) avec **kstuff**, un **chargeur d'ELF qui écoute sur le port
   9021** (elfldr) et **[ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus) 1.7beta3 ou plus récent** (essayé :
-  1.7beta11), qui rend `/data` visible au titre et l'enregistre.
+  1.7beta11), qui rend `/data` visible au titre et l'enregistre ; **1.7beta4 ou plus récent** pour l'installer sur un disque
+  d'extension (il rend alors ce disque visible au titre lui aussi).
 - Votre réseau local entre le PC et la console : la fenêtre du constructeur peut envoyer le titre elle-même (étape 6, par
   FTP), ou vous le copiez vous-même (un serveur FTP, par exemple).
 - **Votre propre copie du jeu**, extraite de votre propre console, en fichier `.nup` (version 131072 du jeu). Environ 26 Go.
 - **Un PC sous Windows 10 ou 11 (64 bits), ou sous Linux x86-64**, pour le constructeur, avec un processeur qui a l'AVX2
   (x86-64-v3) : 8 Go de mémoire au moins (16 Go, c'est bien plus rapide), environ 12 Go libres en plus du fichier du jeu.
-  - **Windows :** `Grapnel-Builder-0.2.0-windows-x64.zip`, sur la page
+  - **Windows :** `Grapnel-Builder-0.2.1-windows-x64.zip`, sur la page
     [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) de ce dépôt : un dossier qui contient tout (son LLVM,
     Python, la chaîne d'outils console), rien à installer.
   - **Linux :** **LLVM 19.1.7**, git et Python 3.12 ou plus récent, et **la chaîne d'outils console**,
-    `grapnel-toolchain-0.3-linux-x64.tar.xz`, sur la même page (le SDK, les pièces de lien et le pilote de la console, la
+    `grapnel-toolchain-0.3.1-linux-x64.tar.xz`, sur la même page (le SDK, les pièces de lien et le pilote de la console, la
     préparation des shaders et le serveur FTP que l'étape 6 peut envoyer ; aucun fichier du jeu dedans).
 
 ### Construire sous Windows
 
-1. Décompressez tout `Grapnel-Builder-0.2.0-windows-x64.zip` (clic droit, « Extraire tout… ») dans un dossier à vous au
+1. Décompressez tout `Grapnel-Builder-0.2.1-windows-x64.zip` (clic droit, « Extraire tout… ») dans un dossier à vous au
    chemin court, par exemple `C:\Grapnel-Builder`. Rien à installer, pas de droits d'administrateur.
 2. Lancez `Grapnel.exe`. Il n'est pas signé : si Windows affiche « Windows a protégé votre ordinateur », cliquez sur
    **Informations complémentaires**, puis **Exécuter quand même**. Un antivirus peut examiner ou bloquer les programmes du
@@ -302,15 +324,25 @@ Grapnel est publié avant d'être fini, pour que d'autres puissent aider.
 4. L'étape 6 demande l'adresse IP de la console. Elle envoie par FTP : le serveur FTP de la console s'il répond (port
    2121), sinon [ftpsrv](https://github.com/ps5-payload-dev/ftpsrv) (GPL-3.0), qu'elle envoie au chargeur d'ELF de la
    console (port 9021). Elle copie d'abord vos parties sur le PC (`console-saves\` dans le dossier de sortie), demande
-   avant de remplacer quoi que ce soit, ne touche que `/data/homebrew/GRPN00001` et `/data/grapnel`, n'envoie le fichier du
-   jeu que si la console ne l'a pas, reprend un envoi coupé là où il en était, et relit les tailles et le CRC32 de l'eboot.
-   ShadowMountPlus enregistre ensuite le titre.
+   avant de remplacer quoi que ce soit, ne touche que le dossier du titre, celui du fichier du jeu et `/data/grapnel`,
+   n'envoie le fichier du jeu que si la console ne l'a pas, reprend un envoi coupé là où il en était, et relit les tailles
+   et le CRC32 de l'eboot. ShadowMountPlus enregistre ensuite le titre.
+5. L'étape 6 installe sur le **stockage interne** de la console ou sur son **disque d'extension** (`/mnt/ext1`, trouvé tout
+   seul). Sur le disque, le titre va dans `/mnt/ext1/homebrew/GRPN00001` et le fichier du jeu dans
+   `/mnt/ext1/grapnel/game.nup` ; vos parties, réglages et journaux restent dans `/data/grapnel`, et le `hookshot_env.txt`
+   envoyé là dit où est le fichier du jeu (`HOOKSHOT_PS5_NUP=/mnt/ext1/grapnel/game.nup`). Elle ne touche jamais aux autres
+   jeux du disque. Un titre ou un fichier du jeu laissé à l'autre endroit n'est retiré que si vous dites oui, une fois
+   l'envoi relu.
 
 Sur un Ryzen 5 3600X avec 16 Go (le PC d'un joueur, Windows 11), deux constructions : la traduction 155 et 266 s, la
 compilation 1 980 et 2 066 s (33 et 34 min), la préparation des shaders 1 318 et 2 839 s (22 et 47 min, contrôle compris). L'`eboot.bin` et le cache des shaders faits là sont ceux du
 constructeur Linux, octet pour octet : le même CRC32 pour l'eboot, les mêmes 57 210 clés et contenus pour le cache.
 `Grapnel-console.cmd` fait la même construction sans la fenêtre. « Copier le rapport » donne ce qu'il faut envoyer en cas
 de problème.
+
+Si la préparation des shaders rencontre une faute dans la mémoire du processus lui-même (vu de temps en temps sous Wine,
+jamais sous Windows jusqu'ici), l'exécution s'arrête, la faute est écrite dans son journal, et le constructeur la relance là
+où elle en était ; avant la 0.2.1, une telle faute pouvait lui faire laisser un programme de côté, ou attendre sans fin.
 
 ### Construire sous Linux
 
@@ -323,9 +355,9 @@ de [heydemoura/PS5_Longshot](https://github.com/heydemoura/PS5_Longshot) ; son g
 cloner ce dépôt, décompresser la chaîne d'outils, puis, dans le dossier du dépôt :
 
 ```bash
-~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3-linux-x64
+~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3.1-linux-x64
 ~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --nup "$HOME/<votre jeu>.nup" --out ~/grapnel-out \
-    --toolchain ~/grapnel-toolchain-0.3-linux-x64
+    --toolchain ~/grapnel-toolchain-0.3.1-linux-x64
 ```
 
 - `--check` n'a pas besoin du jeu : il vérifie tout ce dont la construction a besoin (ses paquets Python, LLVM 19.1.7, la
@@ -363,6 +395,10 @@ main :
    contenir son icône et ses images à ce moment : l'accueil les copie alors), puis lancez **Grapnel** depuis l'accueil.
 4. Laissez tourner le chargeur d'ELF : au démarrage, le titre lui envoie son courtier d'écriture (port 9021), qui rend ses
    grosses écritures rapides. Sans lui, le journal dit `elf loader unavailable` et le titre écrit lui-même, plus lentement.
+
+**Sur un disque d'extension** (ShadowMountPlus 1.7beta4 ou plus récent) : le dossier du titre va dans
+`/mnt/ext1/homebrew/GRPN00001/` et le fichier du jeu dans `/mnt/ext1/grapnel/game.nup` ; `data/grapnel/` va toujours dans
+`/data/grapnel/`, et son `hookshot_env.txt` reçoit la ligne `HOOKSHOT_PS5_NUP=/mnt/ext1/grapnel/game.nup`.
 
 Le fichier de réglages que le constructeur met dans `/data/grapnel/` est le
 [`ps5/hookshot_env.default.txt`](../ps5/hookshot_env.default.txt) du dépôt (avec [`ps5/skip.txt`](../ps5/skip.txt) à côté) :
@@ -455,7 +491,8 @@ fichier et daté, est dans [docs/grapnel-changes.md](../docs/grapnel-changes.md)
 
 Longshot et Hookshot, et tous ceux qu'ils citent ; la pile PS5 de mihawk-99 (PS5_Mesa, PS5_Vulkan, PS5_PayloadSDK,
 PS5_VulkanTemplate, PS5_MihawkGen) ; le SDK de ps5-payload-dev ; PS5_Longshot de heydemoura, modèle du constructeur ;
-bizkut ; Eden et suyu ; Kenney (CC0) ; Dear ImGui et les autres composants. Tous, et ce que chacun a apporté :
+bizkut ; Longshot Oberon de rimidalv333 (les modules de shaders paresseux) ; Eden et suyu ; Kenney (CC0) ; Dear ImGui et
+les autres composants. Tous, et ce que chacun a apporté :
 [CREDITS.md](../CREDITS.md).
 
 ### Non-affiliation

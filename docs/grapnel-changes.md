@@ -18,7 +18,7 @@ licence, and a save made with the game):
 
 ## Files
 
-290 added, 160 modified, 2 removed.
+294 added, 166 modified, 2 removed.
 
 | Change | File | Last changed |
 |---|---|---|
@@ -35,7 +35,7 @@ licence, and a save made with the game):
 | modified | `builder/setup/setup.rc` | 2026-11-23 |
 | modified | `docs/development.md` | 2026-11-22 |
 | added | `docs/grapnel-changes.md` | 2026-11-24 |
-| added | `docs/ps5-port.md` | 2026-11-23 |
+| added | `docs/ps5-port.md` | 2026-11-24 |
 | added | `docs/tested/2026-11-16-astc-reuse-joeymagnus-off.md` | 2026-11-17 |
 | added | `docs/tested/2026-11-16-astc-reuse-joeymagnus-on.md` | 2026-11-17 |
 | added | `docs/tested/2026-11-16-dead-targets-every-present-gumminaomi-new1.md` | 2026-11-17 |
@@ -85,7 +85,7 @@ licence, and a save made with the game):
 | modified | `gpu/vk/vk_api.h` | 2026-11-16 |
 | modified | `gpu/vk/vk_bug_report.cpp` | 2026-11-16 |
 | modified | `gpu/vk/vk_coopmat.cpp` | 2026-11-23 |
-| modified | `gpu/vk/vk_draw.cpp` | 2026-11-23 |
+| modified | `gpu/vk/vk_draw.cpp` | 2026-11-24 |
 | modified | `gpu/vk/vk_framegen.cpp` | 2026-11-23 |
 | added | `gpu/vk/vk_gputrail.cpp` | 2026-11-11 |
 | added | `gpu/vk/vk_gputrail.h` | 2026-11-11 |
@@ -94,21 +94,23 @@ licence, and a save made with the game):
 | modified | `gpu/vk/vk_internal.h` | 2026-11-22 |
 | modified | `gpu/vk/vk_jobs.cpp` | 2026-11-16 |
 | modified | `gpu/vk/vk_jobs.h` | 2026-11-16 |
-| added | `gpu/vk/vk_launcher.cpp` | 2026-11-23 |
+| added | `gpu/vk/vk_launcher.cpp` | 2026-11-24 |
 | added | `gpu/vk/vk_launcher.h` | 2026-11-23 |
 | modified | `gpu/vk/vk_loader.h` | 2026-11-16 |
-| modified | `gpu/vk/vk_main.cpp` | 2026-11-23 |
+| modified | `gpu/vk/vk_main.cpp` | 2026-11-24 |
 | modified | `gpu/vk/vk_memory.cpp` | 2026-11-22 |
 | modified | `gpu/vk/vk_menu.cpp` | 2026-11-24 |
 | modified | `gpu/vk/vk_menu.h` | 2026-11-22 |
 | modified | `gpu/vk/vk_paths.h` | 2026-11-23 |
-| modified | `gpu/vk/vk_progcache.cpp` | 2026-11-23 |
-| modified | `gpu/vk/vk_programs.cpp` | 2026-11-16 |
+| modified | `gpu/vk/vk_progcache.cpp` | 2026-11-24 |
+| modified | `gpu/vk/vk_progcache.h` | 2026-11-24 |
+| modified | `gpu/vk/vk_programs.cpp` | 2026-11-24 |
 | added | `gpu/vk/vk_ps5.cpp` | 2026-11-09 |
 | modified | `gpu/vk/vk_recorder.h` | 2026-11-22 |
 | modified | `gpu/vk/vk_replay.cpp` | 2026-11-22 |
 | modified | `gpu/vk/vk_shader.cpp` | 2026-11-16 |
-| modified | `gpu/vk/vk_texture.cpp` | 2026-11-22 |
+| modified | `gpu/vk/vk_shader.h` | 2026-11-24 |
+| modified | `gpu/vk/vk_texture.cpp` | 2026-11-24 |
 | modified | `gpu/vk/vk_texture.h` | 2026-11-17 |
 | modified | `gpu/vk/vk_vma.cpp` | 2026-11-22 |
 | modified | `gpu/vk/vk_xfer.cpp` | 2026-11-16 |
@@ -117,7 +119,7 @@ licence, and a save made with the game):
 | modified | `host/discord_rpc.c` | 2026-11-16 |
 | modified | `host/game_layout.c` | 2026-11-23 |
 | modified | `host/hos.h` | 2026-11-16 |
-| modified | `host/hos_main.c` | 2026-11-23 |
+| modified | `host/hos_main.c` | 2026-11-24 |
 | modified | `host/hos_mem.c` | 2026-11-16 |
 | modified | `host/hos_paths.h` | 2026-11-23 |
 | modified | `host/hos_svc.c` | 2026-11-16 |
@@ -157,6 +159,7 @@ licence, and a save made with the game):
 | added | `host/posix/ps5_fdv_hooks.h` | 2026-11-09 |
 | added | `host/posix/ps5_fiber.c` | 2026-11-09 |
 | added | `host/posix/ps5_files.c` | 2026-11-23 |
+| added | `host/posix/ps5_game_file.h` | 2026-11-24 |
 | added | `host/posix/ps5_heap_pieces.c` | 2026-11-12 |
 | added | `host/posix/ps5_helpers.h` | 2026-11-22 |
 | added | `host/posix/ps5_mic.h` | 2026-11-24 |
@@ -230,7 +233,7 @@ licence, and a save made with the game):
 | added | `scripts/grapnel-builder/window/grapnel.ico` | 2026-11-23 |
 | added | `scripts/grapnel-builder/window/grapnel.png` | 2026-11-23 |
 | added | `scripts/grapnel-builder/window/launcher.c` | 2026-11-23 |
-| added | `scripts/grapnel-builder/window/launcher.manifest` | 2026-11-23 |
+| added | `scripts/grapnel-builder/window/launcher.manifest` | 2026-11-24 |
 | added | `scripts/grapnel-builder/window/launcher.rc` | 2026-11-23 |
 | modified | `scripts/host_shaders.py` | 2026-11-22 |
 | modified | `scripts/linux/appimage.sh` | 2026-11-23 |
@@ -310,6 +313,7 @@ licence, and a save made with the game):
 | added | `tests/test_draw_lean.cpp` | 2026-11-23 |
 | added | `tests/test_draw_lean.py` | 2026-11-22 |
 | modified | `tests/test_drawn_page_map.py` | 2026-11-17 |
+| added | `tests/test_driver_fault_filter.py` | 2026-11-24 |
 | modified | `tests/test_dummy_views.py` | 2026-11-16 |
 | modified | `tests/test_env_file.py` | 2026-11-16 |
 | modified | `tests/test_fallback_pipeline_state.py` | 2026-11-22 |
@@ -331,6 +335,7 @@ licence, and a save made with the game):
 | added | `tests/test_launcher_check.py` | 2026-11-22 |
 | added | `tests/test_launcher_logic.py` | 2026-11-24 |
 | modified | `tests/test_linux_driver_fault_guard.py` | 2026-11-22 |
+| modified | `tests/test_linux_pressure.py` | 2026-11-24 |
 | modified | `tests/test_linux_saves_move.py` | 2026-11-16 |
 | added | `tests/test_load_peak.cpp` | 2026-11-12 |
 | added | `tests/test_load_peak.py` | 2026-11-16 |
@@ -359,11 +364,15 @@ licence, and a save made with the game):
 | modified | `tests/test_present_semaphores.py` | 2026-11-16 |
 | modified | `tests/test_present_source_crop.py` | 2026-11-16 |
 | modified | `tests/test_present_thread.py` | 2026-11-12 |
-| added | `tests/test_ps5_back_to_launcher.py` | 2026-11-23 |
+| modified | `tests/test_program_cache_cleanup.py` | 2026-11-24 |
+| modified | `tests/test_program_cache_one_variant.py` | 2026-11-24 |
+| added | `tests/test_ps5_back_to_launcher.py` | 2026-11-24 |
 | added | `tests/test_ps5_data_folder.py` | 2026-11-23 |
 | added | `tests/test_ps5_display_not_a_window.py` | 2026-11-17 |
+| added | `tests/test_ps5_game_file.py` | 2026-11-24 |
 | added | `tests/test_ps5_grapnel_texts.py` | 2026-11-23 |
 | added | `tests/test_ps5_helpers_shared.py` | 2026-11-22 |
+| added | `tests/test_ps5_lazy_modules.py` | 2026-11-24 |
 | added | `tests/test_ps5_lot46_off_unless_set.py` | 2026-11-17 |
 | added | `tests/test_ps5_menu_chord.py` | 2026-11-23 |
 | added | `tests/test_ps5_menu_fond.py` | 2026-11-22 |
@@ -384,6 +393,7 @@ licence, and a save made with the game):
 | modified | `tests/test_recorder_sync.py` | 2026-11-22 |
 | modified | `tests/test_renderer_load_error.py` | 2026-11-16 |
 | modified | `tests/test_reserved_core.py` | 2026-11-16 |
+| modified | `tests/test_seed_variant_cleanup.py` | 2026-11-24 |
 | modified | `tests/test_shader_stamp_cache.py` | 2026-11-16 |
 | added | `tests/test_shadow_blocks.py` | 2026-11-22 |
 | added | `tests/test_shadow_slot.py` | 2026-11-17 |

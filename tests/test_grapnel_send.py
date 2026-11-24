@@ -2,7 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The assistant's step 6, grapnel_send.py, against tests/ftp_fake.py (ftpsrv's ways on a folder of this PC): a first send,
 a send over an install with saves (backed up first, kept), an interrupted send gone on with, the game file only when it is
-not there with its size, and nothing written outside the two folders."""
+not there with its size, and nothing written outside the two folders. And the extension disk (a /mnt/ext1 of the fake
+console, with other titles in its homebrew folder): found, sent to, the title and the game file moved there from the
+internal storage and back (the old ones removed only when asked), HOOKSHOT_PS5_NUP in the hookshot_env.txt sent when the
+game file is there and not otherwise, the other titles never touched."""
+import json
 import os
 import sys
 import tempfile
@@ -151,6 +155,168 @@ class Send(unittest.TestCase):
                 c.upload(self.nup, p)
             with self.assertRaises(gs.SendError):
                 c.delete(p)
+        c.close()
+
+    # ---- the extension disk ----
+
+    def ext1(self, other=True):
+        """The fake console's extension disk: /mnt/ext1 with another title in its homebrew folder, and /mnt/ext0 a mount
+        point with no disk (empty)"""
+        os.makedirs(self.there("mnt", "ext0"))
+        if other:
+            write(self.there("mnt", "ext1", "homebrew", "OTHER0001", "eboot.bin"), b"another title")
+        else:
+            write(self.there("mnt", "ext1", "user", "x.bin"), b"the disk's own")
+
+    def env_there(self):
+        return read(self.there("data", "grapnel", "hookshot_env.txt")).decode()
+
+    def test_the_extension_disk_is_found(self):
+        c = self.console()
+        self.assertEqual(gs.volumes(c), [])
+        self.ext1()
+        self.assertEqual(gs.volumes(c), ["/mnt/ext1"])   # (ext0 is an empty mount point: no disk)
+        self.assertEqual(gs.where(c), {"title": [], "nup": {}})
+        c.close()
+
+    def test_send_to_the_extension_disk(self):
+        self.ext1()
+        c = self.console()
+        p = gs.plan(c, self.out, self.nup, "/mnt/ext1")
+        self.assertEqual((p["title"], p["nup_path"], p["nup_at"]), ("/mnt/ext1/homebrew/GRPN00001", "/mnt/ext1/grapnel/game.nup",
+                                                                     "/mnt/ext1/grapnel/game.nup"))
+        self.assertEqual((p["replace"], p["title_elsewhere"], p["nup_elsewhere"], p["nup"]["send"]), ([], [], [], True))
+        sent = gs.send(c, self.out, self.nup, log=lambda *a: None, place="/mnt/ext1", nup_at=p["nup_at"])
+        self.assertEqual(sent[-1], "/mnt/ext1/homebrew/GRPN00001/eboot.bin")
+        bad, crc = gs.verify(c, self.out, self.nup, "/mnt/ext1", p["nup_at"])
+        self.assertEqual(bad, [])
+        self.assertEqual(read(self.there("mnt", "ext1", "grapnel", "game.nup")), read(self.nup))
+        self.assertTrue(os.path.isfile(self.there("mnt", "ext1", "homebrew", "GRPN00001", "eboot.bin")))
+        self.assertEqual(sorted(os.listdir(self.there("data"))), ["grapnel"])   # (nothing in /data/homebrew)
+        self.assertFalse(os.path.exists(self.there("data", "grapnel", "game.nup")))
+        self.assertEqual(read(self.there("mnt", "ext1", "homebrew", "OTHER0001", "eboot.bin")), b"another title")
+        self.assertEqual(sorted(os.listdir(self.there("mnt", "ext1", "homebrew"))), ["GRPN00001", "OTHER0001"])
+        self.assertEqual(sorted(os.listdir(self.there("mnt", "ext1"))), ["grapnel", "homebrew"])
+        env = self.env_there()
+        self.assertTrue(env.startswith("A=1\n"))
+        self.assertIn("\nHOOKSHOT_PS5_NUP=/mnt/ext1/grapnel/game.nup\n", env)
+        self.assertEqual(read(os.path.join(self.out, "data", "grapnel", "hookshot_env.txt")), b"A=1\n")   # (the build's kept)
+        # (a second send keeps all of it: the made hookshot_env.txt too)
+        self.assertEqual(gs.send(c, self.out, None, log=lambda *a: None, place="/mnt/ext1", nup_at=p["nup_at"]), [])
+        c.close()
+
+    def test_the_internal_storage_has_no_nup_line(self):
+        self.ext1()
+        write(os.path.join(self.out, "data", "grapnel", "hookshot_env.txt"), b"A=1\nHOOKSHOT_PS5_NUP=/mnt/ext1/grapnel/game.nup\n")
+        c = self.console()
+        p = gs.plan(c, self.out, self.nup)
+        gs.send(c, self.out, self.nup, log=lambda *a: None, nup_at=p["nup_at"])
+        self.assertEqual(gs.verify(c, self.out, self.nup, gs.INTERNAL, p["nup_at"])[0], [])
+        self.assertEqual(self.env_there(), "A=1\n")   # (no line, even one a hand put in the build's file)
+        write(os.path.join(self.out, "data", "grapnel", "hookshot_env.txt"), b"A=1\r\nB=2\r\n")
+        gs.send(c, self.out, None, log=lambda *a: None, nup_at=p["nup_at"])
+        self.assertEqual(read(self.there("data", "grapnel", "hookshot_env.txt")), b"A=1\r\nB=2\r\n")   # (as built, byte for byte)
+        c.close()
+
+    def test_moved_from_the_internal_storage_to_the_disk_and_back(self):
+        self.ext1()
+        write(self.there("data", "grapnel", "user", "save0.bin"), b"my save")
+        c = self.console()
+        p = gs.plan(c, self.out, self.nup)
+        gs.send(c, self.out, self.nup, log=lambda *a: None, nup_at=p["nup_at"])
+        # (to the disk: the title and the game file there, the old ones offered, removed only when asked)
+        p = gs.plan(c, self.out, self.nup, "/mnt/ext1")
+        self.assertEqual(p["title_elsewhere"], ["/data/homebrew/GRPN00001"])
+        self.assertEqual(p["nup_elsewhere"], [("/data/grapnel/game.nup", 4 << 20)])
+        self.assertTrue(p["nup"]["send"])   # (not on the disk yet: sent from the PC, ftpsrv has no copy between disks)
+        self.assertEqual(gs.where(c)["title"], ["internal"])
+        gs.send(c, self.out, self.nup, log=lambda *a: None, place="/mnt/ext1", nup_at=p["nup_at"])
+        self.assertEqual(gs.verify(c, self.out, self.nup, "/mnt/ext1", p["nup_at"])[0], [])
+        self.assertTrue(os.path.isdir(self.there("data", "homebrew", "GRPN00001")))   # (still there until asked)
+        gs.remove_title(c, p["title_elsewhere"][0], self.out, "console")
+        gs.remove_nup(c, p["nup_elsewhere"][0][0])
+        self.assertEqual(os.listdir(self.there("data", "homebrew")), [])
+        self.assertEqual(sorted(os.listdir(self.there("data", "grapnel"))), ["hookshot_env.txt", "image.bin", "user"])
+        self.assertEqual(read(self.there("data", "grapnel", "user", "save0.bin")), b"my save")   # (the saves stay)
+        self.assertEqual(gs.where(c), {"title": ["/mnt/ext1"], "nup": {"/mnt/ext1": 4 << 20}})
+        self.assertIn("HOOKSHOT_PS5_NUP=/mnt/ext1/grapnel/game.nup", self.env_there())
+        # (and back to the internal storage: the line goes)
+        p = gs.plan(c, self.out, self.nup)
+        self.assertEqual((p["title_elsewhere"], p["nup_elsewhere"]), (["/mnt/ext1/homebrew/GRPN00001"],
+                                                                      [("/mnt/ext1/grapnel/game.nup", 4 << 20)]))
+        gs.send(c, self.out, self.nup, log=lambda *a: None, nup_at=p["nup_at"])
+        self.assertEqual(gs.verify(c, self.out, self.nup, gs.INTERNAL, p["nup_at"])[0], [])
+        self.assertEqual(self.env_there(), "A=1\n")
+        gs.remove_title(c, p["title_elsewhere"][0], self.out, "console")
+        gs.remove_nup(c, p["nup_elsewhere"][0][0])
+        self.assertEqual(os.listdir(self.there("mnt", "ext1", "homebrew")), ["OTHER0001"])   # (the other title stays)
+        self.assertEqual(os.listdir(self.there("mnt", "ext1", "grapnel")), [])
+        self.assertEqual(gs.where(c), {"title": ["internal"], "nup": {"internal": 4 << 20}})
+        with open(os.path.join(self.out, "console-sent.json"), encoding="utf-8") as f:
+            journal = json.load(f)["console"]
+        self.assertFalse([k for k in journal if k.startswith("/mnt/ext1/homebrew/GRPN00001")])   # (forgotten with the folder)
+        c.close()
+
+    def test_the_game_file_not_sent_is_read_where_it_is(self):
+        """The box for the game file left out: the game reads the copy there is, the place's first, else the internal one, and
+        the hookshot_env.txt sent says so"""
+        self.ext1()
+        write(self.there("data", "grapnel", "game.nup"), read(self.nup))
+        c = self.console()
+        p = gs.plan(c, self.out, None, "/mnt/ext1")
+        self.assertEqual((p["nup_at"], p["nup_elsewhere"]), ("/data/grapnel/game.nup", []))
+        gs.send(c, self.out, None, log=lambda *a: None, place="/mnt/ext1", nup_at=p["nup_at"])
+        self.assertNotIn("HOOKSHOT_PS5_NUP", self.env_there())
+        write(self.there("mnt", "ext1", "grapnel", "game.nup"), read(self.nup))
+        p = gs.plan(c, self.out, None, "/mnt/ext1")
+        self.assertEqual(p["nup_at"], "/mnt/ext1/grapnel/game.nup")
+        gs.send(c, self.out, None, log=lambda *a: None, place="/mnt/ext1", nup_at=p["nup_at"])
+        self.assertIn("HOOKSHOT_PS5_NUP=/mnt/ext1/grapnel/game.nup", self.env_there())
+        self.assertEqual(gs.verify(c, self.out, None, "/mnt/ext1", p["nup_at"])[0], [])
+        c.close()
+
+    def test_a_disk_with_no_homebrew_folder_yet(self):
+        self.ext1(other=False)
+        c = self.console()
+        p = gs.plan(c, self.out, self.nup, "/mnt/ext1")
+        gs.send(c, self.out, self.nup, log=lambda *a: None, place="/mnt/ext1", nup_at=p["nup_at"])
+        self.assertEqual(gs.verify(c, self.out, self.nup, "/mnt/ext1", p["nup_at"])[0], [])
+        self.assertEqual(sorted(os.listdir(self.there("mnt", "ext1"))), ["grapnel", "homebrew", "user"])
+        c.close()
+
+    def test_no_disk_no_send(self):
+        os.makedirs(self.there("mnt", "ext1"))   # (a mount point with no disk)
+        c = self.console()
+        with self.assertRaises(gs.SendError):
+            gs.plan(c, self.out, self.nup, "/mnt/ext1")
+        with self.assertRaises(gs.SendError):
+            gs.plan(c, self.out, self.nup, "/mnt/ext2")
+        self.assertEqual(os.listdir(self.there("mnt", "ext1")), [])
+        c.close()
+
+    def test_nothing_else_on_the_disk(self):
+        self.ext1()
+        c = self.console()
+        for p in ("/mnt/ext1/homebrew/OTHER0001/eboot.bin", "/mnt/ext1/other.bin", "/mnt/ext1/grapnelx/a", "/mnt/ext1/homebrew/x",
+                  "/mnt/ext2/grapnel/game.nup", "/mnt/ext1/grapnel/../homebrew/OTHER0001/eboot.bin",
+                  "/mnt/ext1/homebrew/GRPN00001/../OTHER0001/eboot.bin", "/mnt/ext1//homebrew/OTHER0001/eboot.bin"):
+            with self.assertRaises(gs.SendError, msg=p):
+                c.upload(self.nup, p)
+            with self.assertRaises(gs.SendError, msg=p):
+                c.delete(p)
+        for p in ("/mnt/ext1", "/mnt/ext1/homebrew", "/mnt/ext1/homebrew/OTHER0001", "/mnt/ext3/homebrew/GRPN00001"):
+            with self.assertRaises(gs.SendError, msg=p):
+                c.rmdir(p)
+        for p in ("/mnt/ext1/homebrew/OTHER0001", "/mnt/ext1/homebrew", "/data/homebrew", "/mnt/ext1/grapnel"):
+            with self.assertRaises(gs.SendError, msg=p):
+                gs.remove_title(c, p)
+        for p in ("/mnt/ext1/grapnel/image.bin", "/data/grapnel/user/save0.bin", "/mnt/ext1/homebrew/OTHER0001/eboot.bin"):
+            with self.assertRaises(gs.SendError, msg=p):
+                gs.remove_nup(c, p)
+        with self.assertRaises(gs.SendError):
+            c.mkdirs("/mnt/ext2/grapnel")   # (never a mount point: a disk that is not there)
+        self.assertEqual(read(self.there("mnt", "ext1", "homebrew", "OTHER0001", "eboot.bin")), b"another title")
+        self.assertFalse(os.path.exists(self.there("mnt", "ext2")))
         c.close()
 
     def test_cancel(self):

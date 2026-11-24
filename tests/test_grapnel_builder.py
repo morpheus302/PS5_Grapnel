@@ -415,6 +415,39 @@ class Assistant(unittest.TestCase):
                     gui.this_version = old
 
 
+    def test_step6_finds_the_extension_disk_and_the_title(self):
+        """Step 6's connection test asks the console's FTP server for its extension disks and where the title is (the page
+        then offers the disk and chooses the title's place by default)"""
+        try:
+            import grapnel_gui as gui
+        except ImportError:
+            self.skipTest("no tkinter")
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import ftp_fake
+        with tempfile.TemporaryDirectory() as t:
+            jail = os.path.realpath(t)
+            os.makedirs(os.path.join(jail, "mnt", "ext0"))
+            os.makedirs(os.path.join(jail, "mnt", "ext1", "homebrew", "GRPN00001"))
+            os.makedirs(os.path.join(jail, "data", "grapnel"))
+            with open(os.path.join(jail, "data", "grapnel", "game.nup"), "wb") as f:
+                f.write(b"nup")
+            server = ftp_fake.Server(jail)
+            port = server.start()
+            old = os.environ.get("GRAPNEL_TEST_CONSOLE_ROOT")
+            os.environ["GRAPNEL_TEST_CONSOLE_ROOT"] = jail
+            try:
+                found = gui.probe_places("127.0.0.1", port)
+            finally:
+                server.shutdown()
+                server.server_close()
+                if old is None:
+                    os.environ.pop("GRAPNEL_TEST_CONSOLE_ROOT")
+                else:
+                    os.environ["GRAPNEL_TEST_CONSOLE_ROOT"] = old
+            self.assertTrue(found["ftp"])
+            self.assertEqual(found["volumes"], ["/mnt/ext1"])
+            self.assertEqual(found["where"], {"title": ["/mnt/ext1"], "nup": {"internal": 3}})
+
     def test_a_work_folder_is_known(self):
         try:
             import grapnel_gui as gui

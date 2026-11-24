@@ -200,9 +200,10 @@ def check_sources():
     run = block(launcher, "void launcher_run() {")
     need("if (L::back_offered(kConsole, env_on(L::kBackSwitch), env)) {" in run, "the screen looks for the file without the switch")
     # (lot 82: the shader preparation's own reasons beside the file's: its continue file, a preparation to do)
+    # (lot 88: and whether the game file can be read, no_game, which shows it too)
     need(run.index("back = L::back_take(game_folder_path() + L::kBackMarker, &said);") <
          run.index("if (!L::show(env, kConsole, mode, check.verdict, r1, back || prep_go_on, CP::asks_for_screen(prep_offer), "
-                   "&why)) {"), "the screen decides before the file is taken")
+                   "no_game, &why)) {"), "the screen decides before the file is taken")
     need("check.verdict != L::V_FAIL && !back && !prep_go_on && !CP::asks_for_screen(prep_offer)) {" in run,
          "R1 is still waited for when the game sent the player back")
     need(run.index('if (env && *env == \'0\') {') < run.index("L::back_offered"), "HOOKSHOT_PS5_LAUNCHER=0 no longer comes first")

@@ -18,9 +18,11 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -445,6 +447,227 @@ bool program_cache_payload(const uint8_t* stored, size_t stored_size, uint32_t k
     return true;
 }
 
+// ---- (ps5, lot 87) Lazy shader modules: from Longshot Oberon by rimidalv333 (GPL-3.0, github.com/rimidalv333/longshot-oberon, c9067b7,
+// gpu/vk/vk_progcache.cpp "Lazy shader modules" and RX_VK_DROP_PACKED), adapted here ----
+// Each stage of a program read from the program cache kept a VkShaderModule for the whole session, and RADV's
+// vk_common_CreateShaderModule keeps a copy of its SPIR-V in each: on the console, where programs are read when the game makes them
+// and nothing lets their modules go (program_cache_drop_modules is Linux's), that copy grows with every program read (~140 KB a
+// program, hookshot_programs.bin), and Longshot Oberon measured ~356 MB of them in the base PS5's heap. Here such a stage keeps
+// its SPIR-V zstd-packed (Stage::packed) and its module is a stand-in: the packing's address with the low bit set, which no driver
+// handle has (they are aligned pointers). vkCreateGraphicsPipelines and vkCreateComputePipelines (the loaded pointers, vkx) are
+// wrapped: a stage with a stand-in gets a real module made from the packed SPIR-V for that call, destroyed when it returns (Vulkan
+// allows it once the pipeline is made; the driver's pipeline cache keys the SPIR-V's hash, the same as before, so the driver cache
+// prepared on the PC still answers). vkDestroyShaderModule leaves stand-ins alone: the packing goes with its stage. Programs
+// translated here make their modules as before. RX_VK_LAZY_MODULES=0: a module each, as before (on by default on the console only).
+// RX_VK_DROP_PACKED=0: a stand-in let go (program_cache_drop_loaded, program_cache_drop_modules) keeps its packing for the session;
+// otherwise it is freed kPackedGrace later, in case a build that took the stand-in before it was let go is still making its module
+bool driver_faulted_program(uint64_t key);   // (vk_draw.cpp)
+#ifdef __PROSPERO__
+extern "C" int hos_ps5_memory_free(uint64_t* direct_mb, uint64_t* flexible_mb, uint64_t* largest_mb);   // (host/posix/ps5_early.c)
+#endif
+struct PackedSpirv {
+    std::vector<uint8_t> z;
+    size_t words = 0;
+    uint64_t key = 0;
+};
+bool lazy_modules_on() {
+    static const bool on = [] {
+        const char* e = getenv("RX_VK_LAZY_MODULES");
+        if (e && *e) return !env_value_off(e);
+#ifdef __PROSPERO__
+        return true;
+#else
+        return false;
+#endif
+    }();
+    return on;
+}
+bool drop_packed_on() {
+    static const bool on = [] {
+        const char* e = getenv("RX_VK_DROP_PACKED");
+        return !(e && *e) || !env_value_off(e);
+    }();
+    return on;
+}
+namespace {
+std::atomic<int64_t> lazy_stages_n{0}, lazy_plain_bytes{0}, lazy_packed_bytes{0}, lazy_made{0}, lazy_made_failed{0};
+bool lazy_tagged(VkShaderModule m) { return ((uintptr_t)m & 1) != 0; }
+const PackedSpirv* lazy_of(VkShaderModule m) { return reinterpret_cast<const PackedSpirv*>((uintptr_t)m & ~(uintptr_t)1); }
+/// The stand-in for a stage's SPIR-V, packed into st.packed; null when the program is one the driver faulted on (as make_module)
+VkShaderModule lazy_pack(Stage& st, const std::vector<uint32_t>& spirv, uint64_t key) {
+    if (driver_faulted_program(key) || spirv.empty()) return VK_NULL_HANDLE;
+    // (packed into a buffer the thread keeps, then copied to one of the exact size: a worst-case buffer for each stage, shrunk
+    // after, would leave a hole in the heap between the long-lived blocks each time)
+    static thread_local std::vector<uint8_t> scratch;
+    scratch.resize(ZSTD_compressBound(spirv.size() * 4));
+    const size_t n = ZSTD_compress(scratch.data(), scratch.size(), spirv.data(), spirv.size() * 4, 1);
+    if (ZSTD_isError(n)) return VK_NULL_HANDLE;
+    auto p = std::make_shared<PackedSpirv>();
+    p->words = spirv.size(), p->key = key;
+    p->z.assign(scratch.data(), scratch.data() + n);
+    if (scratch.capacity() > (16u << 20)) std::vector<uint8_t>().swap(scratch);
+    lazy_stages_n++, lazy_packed_bytes += (int64_t)n, lazy_plain_bytes += (int64_t)(spirv.size() * 4);
+    st.packed = p;
+    return reinterpret_cast<VkShaderModule>((uintptr_t)p.get() | 1);
+}
+/// A real module of a stand-in's SPIR-V (VK_NULL_HANDLE: not made)
+VkShaderModule lazy_make(VkShaderModule tagged) {
+    const PackedSpirv* p = lazy_of(tagged);
+    std::vector<uint32_t> spirv(p->words);
+    const size_t got = ZSTD_decompress(spirv.data(), spirv.size() * 4, p->z.data(), p->z.size());
+    if (ZSTD_isError(got) || got != spirv.size() * 4) return lazy_made_failed++, VK_NULL_HANDLE;
+    VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    ci.codeSize = spirv.size() * 4, ci.pCode = spirv.data();
+    VkShaderModule m = VK_NULL_HANDLE;
+    // (not the guarded call: this runs inside guarded_graphics / guarded_compute's armed window, whose jump buffer is one per
+    // thread: a guard here would replace theirs. A fault here is theirs: that pipeline is left out)
+    if (vkx::vkCreateShaderModule(dev.device, &ci, nullptr, &m) != VK_SUCCESS) return lazy_made_failed++, VK_NULL_HANDLE;
+    lazy_made++;
+    return m;
+}
+PFN_vkCreateGraphicsPipelines real_graphics = nullptr;
+PFN_vkCreateComputePipelines real_compute = nullptr;
+PFN_vkDestroyShaderModule real_destroy_module = nullptr;
+/// The stages with stand-ins given real modules (copies of the caller's); false when one could not be made
+bool lazy_stages(const VkPipelineShaderStageCreateInfo* in, uint32_t n, std::vector<VkPipelineShaderStageCreateInfo>& out,
+                 std::vector<VkShaderModule>& temps) {
+    out.assign(in, in + n);
+    for (VkPipelineShaderStageCreateInfo& si : out) {
+        if (!lazy_tagged(si.module)) continue;
+        si.module = lazy_make(si.module);
+        if (!si.module) return false;
+        temps.push_back(si.module);
+    }
+    return true;
+}
+void lazy_drop(std::vector<VkShaderModule>& temps) {
+    for (VkShaderModule m : temps) real_destroy_module(dev.device, m, nullptr);
+}
+VKAPI_ATTR VkResult VKAPI_CALL lazy_create_graphics(VkDevice d, VkPipelineCache cache, uint32_t count,
+                                                    const VkGraphicsPipelineCreateInfo* ci, const VkAllocationCallbacks* a,
+                                                    VkPipeline* out) {
+    bool any = false;
+    for (uint32_t i = 0; i < count && !any; i++)
+        for (uint32_t k = 0; k < ci[i].stageCount && !any; k++) any = ci[i].pStages && lazy_tagged(ci[i].pStages[k].module);
+    if (!any) return real_graphics(d, cache, count, ci, a, out);
+    std::vector<VkGraphicsPipelineCreateInfo> c2(ci, ci + count);
+    std::vector<std::vector<VkPipelineShaderStageCreateInfo>> st(count);
+    std::vector<VkShaderModule> temps;
+    for (uint32_t i = 0; i < count; i++) {
+        if (!ci[i].pStages) continue;
+        if (!lazy_stages(ci[i].pStages, ci[i].stageCount, st[i], temps)) {
+            lazy_drop(temps);
+            for (uint32_t k = 0; k < count; k++) out[k] = VK_NULL_HANDLE;
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        c2[i].pStages = st[i].data();
+    }
+    const VkResult r = real_graphics(d, cache, count, c2.data(), a, out);
+    lazy_drop(temps);
+    return r;
+}
+VKAPI_ATTR VkResult VKAPI_CALL lazy_create_compute(VkDevice d, VkPipelineCache cache, uint32_t count,
+                                                   const VkComputePipelineCreateInfo* ci, const VkAllocationCallbacks* a,
+                                                   VkPipeline* out) {
+    bool any = false;
+    for (uint32_t i = 0; i < count && !any; i++) any = lazy_tagged(ci[i].stage.module);
+    if (!any) return real_compute(d, cache, count, ci, a, out);
+    std::vector<VkComputePipelineCreateInfo> c2(ci, ci + count);
+    std::vector<VkShaderModule> temps;
+    for (uint32_t i = 0; i < count; i++) {
+        if (!lazy_tagged(c2[i].stage.module)) continue;
+        c2[i].stage.module = lazy_make(c2[i].stage.module);
+        if (!c2[i].stage.module) {
+            lazy_drop(temps);
+            for (uint32_t k = 0; k < count; k++) out[k] = VK_NULL_HANDLE;
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        temps.push_back(c2[i].stage.module);
+    }
+    const VkResult r = real_compute(d, cache, count, c2.data(), a, out);
+    lazy_drop(temps);
+    return r;
+}
+VKAPI_ATTR void VKAPI_CALL lazy_destroy_module(VkDevice d, VkShaderModule m, const VkAllocationCallbacks* a) {
+    if (lazy_tagged(m)) return;   // (a stand-in: its packing goes with its stage)
+    real_destroy_module(d, m, a);
+}
+// (the packings of stand-ins let go: freed kPackedGrace later)
+constexpr std::chrono::seconds kPackedGrace{10};
+std::mutex grave_mu;
+std::deque<std::pair<std::chrono::steady_clock::time_point, std::shared_ptr<const PackedSpirv>>> grave;
+std::atomic<int64_t> grave_freed_n{0}, grave_freed_bytes{0};
+void grave_sweep_locked(std::chrono::steady_clock::time_point now) {
+    while (!grave.empty() && now - grave.front().first >= kPackedGrace) {
+        if (grave.front().second) {
+            const int64_t b = (int64_t)grave.front().second->z.size();
+            grave_freed_n.fetch_add(1, std::memory_order_relaxed), grave_freed_bytes.fetch_add(b, std::memory_order_relaxed);
+        }
+        grave.pop_front();
+    }
+}
+/// The stage's packing, its stand-in let go (st.module is about to be nulled by the caller): freed after kPackedGrace
+void lazy_retire(Stage& st) {
+    if (!st.packed || !drop_packed_on()) return;
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard lk(grave_mu);
+    grave_sweep_locked(now);
+    grave.emplace_back(now, std::move(st.packed));
+    st.packed.reset();
+}
+void grave_sweep() {
+    std::lock_guard lk(grave_mu);
+    grave_sweep_locked(std::chrono::steady_clock::now());
+}
+std::atomic<int64_t> loaded_dropped{0};   // (modules let go by program_cache_drop_loaded)
+/// The free direct memory in MiB on the console, for the report (-1: not known, elsewhere)
+int64_t lazy_free_mb() {
+#ifdef __PROSPERO__
+    uint64_t direct = 0, flexible = 0, largest = 0;
+    if (hos_ps5_memory_free(&direct, &flexible, &largest)) return (int64_t)direct;
+#endif
+    return -1;
+}
+}  // namespace
+/// (vk_main.cpp, after load_device) the wrappers put in place of the loaded pointers, once; nothing with RX_VK_LAZY_MODULES=0
+void lazy_modules_install() {
+    if (!lazy_modules_on()) {
+        logf("vk: lazy shader modules: off (RX_VK_LAZY_MODULES=0): the programs read from the program cache keep a module each");
+        return;
+    }
+    if (real_graphics) return;
+    real_graphics = vkx::vkCreateGraphicsPipelines, real_compute = vkx::vkCreateComputePipelines;
+    real_destroy_module = vkx::vkDestroyShaderModule;
+    if (!real_graphics || !real_compute || !real_destroy_module) {
+        real_graphics = nullptr;
+        logf("vk: lazy shader modules: the driver's pipeline functions are not loaded: off");
+        return;
+    }
+    vkx::vkCreateGraphicsPipelines = lazy_create_graphics;
+    vkx::vkCreateComputePipelines = lazy_create_compute;
+    vkx::vkDestroyShaderModule = lazy_destroy_module;
+    logf("vk: lazy shader modules (Longshot Oberon's): the programs read from the program cache keep their SPIR-V packed and make "
+         "a module only for a pipeline build (RX_VK_LAZY_MODULES=0: a module each, as before); a let-go stage's packing freed %lld s "
+         "later %s; the modules of a program read when the game makes it let go once its noted pipelines are built %s",
+         (long long)kPackedGrace.count(), drop_packed_on() ? "(RX_VK_DROP_PACKED=0 keeps it)" : "(off: RX_VK_DROP_PACKED=0)",
+         drop_loaded_modules_on() ? "(RX_VK_DROP_LOADED_MODULES=0 keeps them)" : "(off: RX_VK_DROP_LOADED_MODULES=0)");
+}
+/// (vk_texture.cpp, every 600 presents with the memory heaps) the packings: how much SPIR-V, packed to how much, the modules made
+/// for builds, the packings freed, and the free direct memory
+void lazy_modules_report() {
+    if (!lazy_modules_on() || !real_graphics) return;
+    grave_sweep();
+    const long long plain = lazy_plain_bytes.load() >> 10, packed = lazy_packed_bytes.load() >> 10;
+    const long long freed = grave_freed_bytes.load(std::memory_order_relaxed) >> 10;
+    logf("vk: lazy shader modules: %lld stages read packed, %lld KB of SPIR-V as %lld KB (%lld KB of it held now); %lld modules made "
+         "for builds (%lld not made); %lld modules let go once their programs' noted pipelines were built, %lld programs' modules "
+         "made again; %lld packings freed (%lld KB)%s; free direct memory %lld MiB",
+         (long long)lazy_stages_n.load(), plain, packed, packed - freed, (long long)lazy_made.load(), (long long)lazy_made_failed.load(),
+         (long long)loaded_dropped.load(), (long long)program_cache_remade(), (long long)grave_freed_n.load(std::memory_order_relaxed),
+         freed, drop_packed_on() ? "" : " (RX_VK_DROP_PACKED=0)", (long long)lazy_free_mb());
+}
+// ---- (ps5, lot 87) end of the lazy shader modules ----
+
 /// The kept variants of key read from the file (in: a handle on it, used under mu when given) and made ready, to variants
 void program_cache_read(FILE* in, std::mutex* mu, uint64_t key, const std::vector<DiskRecord>& recs,
                         std::vector<std::unique_ptr<Program>>& variants) {
@@ -513,7 +736,7 @@ void program_cache_read(FILE* in, std::mutex* mu, uint64_t key, const std::vecto
                 ok = false;
                 break;
             }
-            st.module = make_module(spirv, key, nullptr);
+            st.module = lazy_modules_on() ? lazy_pack(st, spirv, key) : make_module(spirv, key, nullptr);   // (lot 87)
             st.phis = fallback_size::spirv_phis(spirv.data(), spirv.size());
             ok = ok && st.module;
         }
@@ -882,7 +1105,8 @@ struct Dropped {
 std::mutex mu;
 std::unordered_set<KeyVariant, KeyVariantHash> built;   // (precompile_run built their noted graphics pipelines)
 std::unordered_map<KeyVariant, Dropped, KeyVariantHash> dropped;
-std::atomic<bool> any{false};   // (set by program_cache_drop_modules: until then, and on Windows, nothing here is looked up)
+std::atomic<bool> any{false};   // (set by program_cache_drop_modules or _drop_loaded: until then nothing here is looked up)
+std::atomic<int64_t> remade{0};   // (lot 87: programs whose modules program_cache_complete_graphics made again)
 }   // namespace module_remake
 
 void program_cache_note_built(const Program& p) {
@@ -969,7 +1193,50 @@ bool program_cache_complete_graphics(const Program& prog) {
         else vkDestroyShaderModule(dev.device, made[i], nullptr);
     }
     module_remake::dropped.erase(it);
+    module_remake::remade.fetch_add(1, std::memory_order_relaxed);
     return true;
+}
+
+// (ps5, lot 87) Longshot #1844 (6d83ab42), as Longshot Oberon carries it: a program read when the game makes it (vk_programs.cpp
+// load_work), every noted pipeline of its variant built there, lets its modules go at once: a new pipeline state in play makes them
+// again from the file (program_cache_complete_graphics). With lazy modules what goes is the stand-in, and its packing after
+// kPackedGrace (lazy_retire). On by default on the console only; RX_VK_DROP_LOADED_MODULES=0 keeps them (=1 elsewhere)
+bool drop_loaded_modules_on() {
+    static const bool on = [] {
+        const char* e = getenv("RX_VK_DROP_LOADED_MODULES");
+        if (e && *e) return !env_value_off(e);
+#ifdef __PROSPERO__
+        return true;
+#else
+        return false;
+#endif
+    }();
+    return on;
+}
+
+int64_t program_cache_remade() { return module_remake::remade.load(std::memory_order_relaxed); }
+
+size_t program_cache_drop_loaded(Program& p) {
+    if (p.compute || p.failed || p.fallback || p.stages.empty()) return 0;
+    for (const Stage& st : p.stages)
+        if (st.module && (!st.code_words || !st.record_size || !st.code_at)) return 0;   // (not remade from the file: kept)
+    const module_remake::KeyVariant kv{p.key, p.variant};
+    std::lock_guard rk(module_remake::mu);
+    if (const auto it = module_remake::dropped.find(kv); it != module_remake::dropped.end() && it->second.program != &p)
+        return 0;   // (one program let go by key and variant: another of the same ones keeps its modules)
+    // (before the first module goes: a pipeline build asks the table from here on)
+    module_remake::any.store(true, std::memory_order_release);
+    size_t n = 0;
+    for (Stage& st : p.stages) {
+        if (!st.module) continue;
+        if (lazy_tagged(st.module)) lazy_retire(st);
+        vkDestroyShaderModule(dev.device, st.module, nullptr);
+        st.module = VK_NULL_HANDLE;
+        n++;
+    }
+    if (n) module_remake::dropped[kv] = module_remake::Dropped{&p, false};
+    loaded_dropped += (int64_t)n;
+    return n;
 }
 
 size_t program_cache_drop_modules() {
@@ -1021,6 +1288,7 @@ size_t program_cache_drop_modules() {
                 if (p->fallback && (st.vk_stage & (VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT)))
                     continue;
                 if (st.module) {
+                    if (lazy_tagged(st.module)) lazy_retire(st);   // (lot 87)
                     vkDestroyShaderModule(dev.device, st.module, nullptr);
                     st.module = VK_NULL_HANDLE;
                     dropped++;

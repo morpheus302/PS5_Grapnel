@@ -56,6 +56,7 @@ int hos_ps5_boot(int argc, char **argv) __attribute__((weak));
    stdio's writes of 16 KiB or more there then go through it, and it outlives the title (a payload sent to the console's
    ELF loader on 127.0.0.1:9021) */
 #include "ps5_broker.h"   /* (and host/posix/ps5_data_folder.h, the data folders' names) */
+#include "ps5_game_file.h"   /* (lot 88: HOOKSHOT_PS5_NUP, the game file on another drive) */
 /* (ps5) main's stage lines: what a console run says first, in klog (prefix [hookshot]), kept here for the boot test's file.
    docs/ps5-port.md and dist/README-console.md list what each says */
 char hos_ps5_stages[4096];
@@ -142,12 +143,34 @@ extern const char *hos_romfs_dir, *hos_user_dir;
    romfs/ (romfs/ wins when both are there), else the folder as before. folder: the game folder ("" when the game was
    given its files by hand), nup: --nup's file or NULL. Opens the package once (host/nn_fs.c hos_fs_use_nup) and writes
    the one line that says what was taken into line: 1 package, 0 folder (or neither) */
+#ifdef __PROSPERO__
+static int ps5_file_there(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+static char ps5_game_chose[900];   /* (lot 88: how the game file was chosen, for stage 4's line) */
+#endif
 static int rom_from_package(const char *folder, const char *nup, char *line, size_t cap) {
     char romfs[MAX_PATH], beside[MAX_PATH];
     snprintf(romfs, sizeof romfs, "%s%sromfs", folder, *folder ? SEP_S : "");
     snprintf(beside, sizeof beside, "%s%sgame.nup", folder, *folder ? SEP_S : "");
     const int have_dir = *folder && GetFileAttributesA(romfs) != INVALID_FILE_ATTRIBUTES;
     const int have_nup = *folder && GetFileAttributesA(beside) != INVALID_FILE_ATTRIBUTES;
+#ifdef __PROSPERO__
+    /* (lot 88) HOOKSHOT_PS5_NUP in hookshot_env.txt: the game file on another drive, read after stage 4 (main). Over game.nup
+       and romfs/ in the data folder, as --nup is; its file not there: game.nup in the data folder when it is (host/posix/
+       ps5_game_file.h) */
+    const char *setting = getenv("HOOKSHOT_PS5_NUP");
+    if (!nup && *folder && setting && *setting) {
+        static char chosen[MAX_PATH];
+        int from_setting = 0;
+        snprintf(chosen, sizeof chosen, "%s",
+                 ps5_game_file_choose(setting, beside, ps5_file_there, &from_setting, ps5_game_chose, sizeof ps5_game_chose));
+        nup = chosen;
+    } else if (!nup && *folder) {
+        snprintf(ps5_game_chose, sizeof ps5_game_chose, "game.nup in the data folder (%s)", beside);
+    }
+#endif
     if (!nup && *folder && !have_dir && have_nup) nup = beside;
     if (!nup) {
         if (have_dir) snprintf(line, cap, "the folder %s%s", romfs, have_nup ? " (game.nup beside it is not used: romfs/ comes first)" : "");
@@ -160,6 +183,61 @@ static int rom_from_package(const char *folder, const char *nup, char *line, siz
     snprintf(line, cap, "the package %s%s", said, ok ? "" : have_dir ? "; the folder romfs/ instead" : "");
     return ok;
 }
+
+#ifdef __PROSPERO__
+/* (lot 88) The game file, after stage 4 (main): the RomFS opened (rom_from_package, host/posix/ps5_game_file.h), and its line:
+   the file, how it was chosen, its size and its drive. When there is no game data at all, what the launch screen says
+   (hos_ps5_game_missing: gpu/vk/vk_launcher.cpp shows it and does not start the game, which stopped later without a word) */
+static char ps5_game_missing_line[1200];
+int hos_ps5_game_missing(char *buf, size_t cap) {
+    if (!ps5_game_missing_line[0]) return 0;
+    if (buf && cap) snprintf(buf, cap, "%s", ps5_game_missing_line);
+    return 1;
+}
+static void ps5_game_file_stage(int argc, char **argv) {
+    const char *root = hos_ps5_data_root();
+    const char *nup = NULL;
+    for (int i = 1; i + 1 < argc; i++) if (!strcmp(argv[i], "--nup")) nup = argv[i + 1];
+    char line[1200], romfs[MAX_PATH];
+    const int ok = rom_from_package(root, nup, line, sizeof line);
+    ps5_stage("ps5: stage 4 romfs: %s", line);
+    snprintf(romfs, sizeof romfs, "%s/romfs", root);
+    struct stat st;
+    if (ok && hos_romfs_nup) {
+        const char *path = nup_path(hos_romfs_nup);
+        const double gb = stat(path, &st) == 0 ? (double)st.st_size / (1u << 30) : -1;
+        ps5_stage("ps5: stage 4 game file: %s, %.2f GiB, on %s (%s)", path, gb, ps5_game_file_volume(path), ps5_game_chose);
+    } else if (stat(romfs, &st) == 0 && S_ISDIR(st.st_mode)) {
+        ps5_stage("ps5: stage 4 game file: none; the folder %s instead", romfs);
+    } else {
+        snprintf(ps5_game_missing_line, sizeof ps5_game_missing_line, "%s", ps5_game_chose[0] ? ps5_game_chose : line);
+        ps5_stage("ps5: stage 4 game file: NONE: %s (%s): the launch screen says so and the game does not start", line,
+                  ps5_game_chose);
+    }
+}
+/* (lot 88) Whether the driver's shader cache folder can be written: the driver opens its files to read and write
+   (O_RDWR | O_CREAT), and a folder it cannot write leaves it with no cache at all (every shader compiled in play). Its folder is
+   the title's, /app0/radv-shader-cache, unless the settings name another (MESA_SHADER_CACHE_DIR): with the title on the
+   extended storage, /app0 is that drive's folder. A small file made and removed; the line says what happened */
+static void ps5_cache_folder_probe(void) {
+    const char *named = getenv("MESA_SHADER_CACHE_DIR");
+    char dir[700], probe[760];
+    snprintf(dir, sizeof dir, "%s", named && *named ? named : "/app0/radv-shader-cache");
+    struct stat st;
+    const int there = stat(dir, &st) == 0 && S_ISDIR(st.st_mode);
+    snprintf(probe, sizeof probe, "%s/.grapnel-write-check", there ? dir : "/app0");
+    const int fd = open(probe, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+    const int err = fd < 0 ? errno : 0;
+    if (fd >= 0) close(fd), unlink(probe);
+    if (fd >= 0)
+        ps5_stage("ps5: stage 4 driver cache folder: %s%s: writable (%s)", dir, there ? "" : " (not there yet: /app0 tried)",
+                  named && *named ? "MESA_SHADER_CACHE_DIR" : "the title's folder");
+    else
+        ps5_stage("ps5: stage 4 driver cache folder: %s%s: NOT WRITABLE (errno %d): the driver cannot open its shader cache "
+                  "there; put the folder radv-shader-cache in /data/grapnel and MESA_SHADER_CACHE_DIR=/data/grapnel/radv-shader-cache "
+                  "in hookshot_env.txt", dir, there ? "" : " (not there: /app0 tried)", err);
+}
+#endif
 
 /* HOS_LARGE_PAGES=1 (experiment): the guest window in 2 MB pages, for fewer TLB misses (the game touches hundreds of MB
    of scattered heap; 4 KB pages cover only ~12 MB of it in the CPU's TLB). The whole window is then physical memory at
@@ -2459,13 +2537,7 @@ int main(int argc, char **argv) {
         ps5_stage("ps5: stage 3 data root: %s (%s), the eboot as %s; /data: %s", root,
                   stat(root, &st) ? "MISSING" : S_ISDIR(st.st_mode) ? "a folder" : "NOT A FOLDER", hos_ps5_exe_path(),
                   hos_ps5_data_status());
-        /* (the RomFS, as game_main takes it: game.nup in the root when there is no romfs/ folder there (host/nup_fs.c: its
-           index built here, once), --nup's file when a launch passes one; the boot test says it too) */
-        const char *nup = NULL;
-        for (int i = 1; i + 1 < argc; i++) if (!strcmp(argv[i], "--nup")) nup = argv[i + 1];
-        char line[1200];
-        rom_from_package(root, nup, line, sizeof line);
-        ps5_stage("ps5: stage 3 romfs: %s", line);
+        /* (lot 88: the RomFS is opened after stage 4 now, once the settings are in the environment: HOOKSHOT_PS5_NUP may name it) */
         hos_ps5_trail_root(root);   /* (the trail in the data root from here, its lines so far copied) */
     }
 #endif
@@ -2491,6 +2563,10 @@ int main(int argc, char **argv) {
             hos_ps5_trail("ps5: reads of guest memory nothing wrote: %s (HOOKSHOT_PS5_ZERO_READS)",
                           hos_ps5_guest_zero_reads() ? "one shared unit of zeros, memory of its own at the first write" : "backed as writes are");
         }
+        /* (lot 88) the RomFS from here, the settings read: HOOKSHOT_PS5_NUP may name the game file on another drive (stage 3
+           opened it before them); and whether the driver's shader cache folder can be written */
+        ps5_game_file_stage(argc, argv);
+        ps5_cache_folder_probe();
     }
     {   /* (the storage broker, before anything writes in the data root. On whenever the root is a data folder it serves
            (/data/grapnel; lot 80: /data/hookshot when used in place): the console holds the title's own writes to 16 MiB/s

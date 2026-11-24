@@ -1,8 +1,8 @@
-# Grapnel builder 0.2 (Linux): building Grapnel for your PS5
+# Grapnel builder 0.2.1 (Linux): building Grapnel for your PS5
 
 *Version française : [INSTALL.fr.md](INSTALL.fr.md).*
 
-*On Windows, take `Grapnel-Builder-0.2.0-windows-x64.zip` from the Releases page instead: a folder with everything in it and a
+*On Windows, take `Grapnel-Builder-0.2.1-windows-x64.zip` from the Releases page instead: a folder with everything in it and a
 step-by-step window (its README, and "Build it on Windows" in the repository's README). This guide is the Linux one.*
 
 Grapnel is a port to the PS5 of Longshot, the static recompilation of *The Legend of Zelda: Ocarina of Time* (Nintendo Switch 2
@@ -18,7 +18,7 @@ Linux PC from **your own copy of the game**, with this builder. Nothing it makes
   **10 GB of free disk** besides the `.nup` (and about 2 GB more for LLVM), and 45 minutes to 2 hours and a half.
 - **LLVM 19.1.7** exactly (every player compiles with the same compiler, so every eboot is the one the project tested),
   **Python 3.12 or newer** (the builder's packages need it) and **git**: how to get them is below.
-- **The console toolchain**, `grapnel-toolchain-0.3-linux-x64.tar.xz`, from the **Releases** page of the Grapnel repository
+- **The console toolchain**, `grapnel-toolchain-0.3.1-linux-x64.tar.xz`, from the **Releases** page of the Grapnel repository
   (<https://github.com/morpheus302/PS5_Grapnel/releases>): the PS5 payload SDK, PS5_Vulkan's linker parts, the RADV driver,
   the renderer's headers, dav1d, and `prepare/`, the shaders' preparation for the PC. No game file and no game code in it.
 - On the console: a jailbreak with an ELF loader and access to `/data`, and FTP (or another way to copy files).
@@ -59,11 +59,11 @@ Linux PC from **your own copy of the game**, with this builder. Nothing it makes
    python3 -m venv ~/grapnel-venv
    ~/grapnel-venv/bin/pip install -r scripts/grapnel-builder/requirements.txt
    ```
-4. **The console toolchain**: download `grapnel-toolchain-0.3-linux-x64.tar.xz` from the Releases page, then unpack it, here
-   into your home folder (it makes `~/grapnel-toolchain-0.3-linux-x64`):
+4. **The console toolchain**: download `grapnel-toolchain-0.3.1-linux-x64.tar.xz` from the Releases page, then unpack it, here
+   into your home folder (it makes `~/grapnel-toolchain-0.3.1-linux-x64`):
 
    ```sh
-   tar -xf ~/Downloads/grapnel-toolchain-0.3-linux-x64.tar.xz -C ~
+   tar -xf ~/Downloads/grapnel-toolchain-0.3.1-linux-x64.tar.xz -C ~
    ```
    Keep the folder as it is unpacked, and writable: every build checks its files, and writes one of its own in it.
 
@@ -72,9 +72,9 @@ Linux PC from **your own copy of the game**, with this builder. Nothing it makes
 From the `PS5_Grapnel` folder:
 
 ```sh
-~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3-linux-x64
+~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3.1-linux-x64
 ~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --nup ~/games/zelda-oot.nup --out ~/grapnel-out \
-    --toolchain ~/grapnel-toolchain-0.3-linux-x64
+    --toolchain ~/grapnel-toolchain-0.3.1-linux-x64
 ```
 
 A game file whose name has spaces or brackets goes in quotes, with `$HOME` rather than `~` (the shell does not expand a `~`

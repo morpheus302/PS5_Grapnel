@@ -52,8 +52,9 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(ROOT, "nx2"))
 import toolchain_ps5  # noqa: E402
 
-VERSION = "0.3"   # (0.2: prepare/, the shaders' preparation for the PC; 0.3: ps5_recipe.json and llvm-rt/, the build without bash,
-                  # ftpsrv/ for step 6, prepare/ for Windows too: Grapnel 0.2's kit)
+VERSION = "0.3.1"   # (0.2: prepare/, the shaders' preparation for the PC; 0.3: ps5_recipe.json and llvm-rt/, the build without bash,
+                  # ftpsrv/ for step 6, prepare/ for Windows too: Grapnel 0.2's kit;
+                    # 0.3.1: the same parts, prepare/ made again for Grapnel 0.2.1's renderer)
 NATIVE_SOURCES = ("native_app_builder.cpp", "self_container.cpp", "elf_object.cpp", "sce_module_writer.cpp")
 PS5_VULKAN_FILES = ("LICENSE", "NOTICE.md", "tools/radv-link.sh", "tooling/prospero-clang18", "tooling/psbc/ps5-pie-unwind.ld",
                     "vendor/ps5/sdk/stubs/agc_canary_link_stub.c", "vendor/ps5/sdk/stubs/agc_driver_canary_link_stub.c",

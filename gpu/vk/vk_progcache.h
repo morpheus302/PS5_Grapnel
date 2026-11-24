@@ -17,6 +17,13 @@
 namespace mkwvk {
 
 struct DiskRecord { int64_t at; size_t size; uint32_t kind; };
+/// (ps5, lot 87) Lazy shader modules (vk_progcache.cpp, after Longshot Oberon): the stages read from the program cache keep their
+/// SPIR-V packed, not a driver module (Stage::packed): on by default on the console, RX_VK_LAZY_MODULES=0 off. lazy_modules_install
+/// swaps the pipeline and module functions for the ones that make the real module for a build (vk_main.cpp, after load_device);
+/// lazy_modules_report says what they hold (vk_texture.cpp, with the memory heaps)
+bool lazy_modules_on();
+void lazy_modules_install();
+void lazy_modules_report();
 extern std::mutex disk_mu;
 extern FILE* disk_in;
 extern std::string disk_path;

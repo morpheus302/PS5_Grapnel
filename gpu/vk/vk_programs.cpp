@@ -244,12 +244,18 @@ void load_work(LoadJob& job) {
                     census.load_computes_cold++;   // (its first dispatch asks again, and compiles on a worker: as before)
                 }
             } else if (notes != index_notes.end()) {
+                // (ps5, lot 87: Longshot #1844 as Longshot Oberon carries it) every noted pipeline of the variant built here: its
+                // modules can go, made again from the file if play ever builds another state of it (program_cache_drop_loaded).
+                // One cold or not read keeps them
+                size_t built = 0, left = 0;
                 for (const NoteAt& n : notes->second) {
-                    if (n.variant != p->variant || !pipe_note_at(notes_in, n.at, note.get())) continue;
+                    if (n.variant != p->variant) continue;
+                    if (!pipe_note_at(notes_in, n.at, note.get())) { left++; continue; }
                     bytes += (int64_t)sizeof(PipeNote);
-                    if (const VkPipeline pl = source.graphics(*p, *note)) census.load_pipes += pipeline_keep_ready(n.key, pl);
-                    else census.load_pipes_cold++;   // (its first draw makes it, as before)
+                    if (const VkPipeline pl = source.graphics(*p, *note)) census.load_pipes += pipeline_keep_ready(n.key, pl), built++;
+                    else census.load_pipes_cold++, left++;   // (its first draw makes it, as before)
                 }
+                if (built && !left && drop_loaded_modules_on()) program_cache_drop_loaded(*p);
             }
             census.load_programs++;
             census.load_unlisted += !p->compute && notes == index_notes.end();

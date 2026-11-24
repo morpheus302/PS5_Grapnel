@@ -290,7 +290,7 @@ guest thread backs only what it uses.
 | What | Where | On the console |
 |---|---|---|
 | The game folder | `host/hos_paths.h:62` (`hos_game_path_a`), `hos_main.c:1258` (image.bin, romfs, user beside the exe) | `GetModuleFileNameA` answers `<root>/eboot.bin` (`win32_posix.c`, `ps5_platform.c:180`) |
-| romfs | `host/nn_fs.c:14` (`hos_romfs_dir`), `--romfs`; `--nup` and `host/nup_fs.c` (`hos_romfs_nup`) | `<root>/game.nup` read in place (one file, 25.6 GB; one descriptor, a 10.5 MiB index built at stage 3), or `<root>/romfs` (186,583 files) when that folder is there |
+| romfs | `host/nn_fs.c:14` (`hos_romfs_dir`), `--romfs`; `--nup` and `host/nup_fs.c` (`hos_romfs_nup`) | `<root>/game.nup` read in place (one file, 25.6 GB; one descriptor, a 10.5 MiB index built at stage 4, after the settings), or the file `HOOKSHOT_PS5_NUP` names in `hookshot_env.txt` (lot 88: the extended storage, `/mnt/ext1/grapnel/game.nup`; `host/posix/ps5_game_file.h`), or `<root>/romfs` (186,583 files) when that folder is there |
 | Saves, cache, temp | `nn_fs.c:122-172` under `hos_user_dir`; `hos_main.c:311` `saves_dir` (XDG on Linux) | `<root>/user` (no `HOME`: `saves_dir` keeps it beside) |
 | Options, env, logs | `hookshot_options.ini`, `hookshot_env.txt` (`hos_main.c:366`), `hookshot_log.txt` (`hos_main.c:1224`) | in `<root>` |
 | Mods | `host/mods.c` | `<root>/mods` |

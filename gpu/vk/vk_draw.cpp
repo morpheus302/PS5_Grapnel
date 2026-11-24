@@ -1447,10 +1447,61 @@ std::atomic<int> st_driver_faults{0};
 /// driver_faults)
 void note_driver_fault() { st_driver_faults.fetch_add(1, std::memory_order_relaxed); }
 #ifdef _WIN32
+// (grapnel, 24/11/2026) Which faults the guards below take for the driver's. One whose instruction is in ntdll, kernelbase or
+// ucrtbase is not the driver's compiler: it is the process heap's (under Wine a corrupt free list faulted in ntdll's
+// heap_free_block, the heap's lock held), and going on would run the rest of the process on that heap, or wait for that lock
+// for ever. Those are left to end the process (the builder's preparation then runs again from where it stopped,
+// grapnel_core.crashed). Every fault the guards see is written first, with no allocation (the heap may be the one broken):
+// its code, instruction (module + offset), read or write, and the address it touched.
+namespace {
+struct ModRange { uintptr_t lo = 0, hi = 0; char name[16] = {}; };
+ModRange g_sys_mods[3];
+void sys_mods_once() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        static const char* const names[3] = {"ntdll.dll", "kernelbase.dll", "ucrtbase.dll"};
+        for (int i = 0; i < 3; i++) {
+            const HMODULE m = GetModuleHandleA(names[i]);
+            if (!m) continue;
+            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(m);
+            const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(reinterpret_cast<const char*>(m) + dos->e_lfanew);
+            g_sys_mods[i].lo = (uintptr_t)m;
+            g_sys_mods[i].hi = (uintptr_t)m + nt->OptionalHeader.SizeOfImage;
+            snprintf(g_sys_mods[i].name, sizeof g_sys_mods[i].name, "%s", names[i]);
+        }
+    });
+}
+char* put_hex(char* o, uint64_t v) {
+    static const char d[] = "0123456789abcdef";
+    *o++ = '0', *o++ = 'x';
+    for (int sh = 60; sh >= 0; sh -= 4) *o++ = d[(v >> sh) & 15];
+    return o;
+}
+char* put_str(char* o, const char* s) { while (*s) *o++ = *s++; return o; }
+LONG driver_fault_filter(EXCEPTION_POINTERS* ep, const char* what) {
+    const EXCEPTION_RECORD* r = ep->ExceptionRecord;
+    const uintptr_t ip = (uintptr_t)r->ExceptionAddress;
+    const ModRange* sys = nullptr;
+    for (const ModRange& m : g_sys_mods) if (m.hi && ip >= m.lo && ip < m.hi) sys = &m;
+    char b[256], *o = b;
+    o = put_str(o, "[vk] fault in "), o = put_str(o, what), o = put_str(o, ": code "), o = put_hex(o, r->ExceptionCode);
+    o = put_str(o, " at "), o = put_hex(o, ip);
+    if (sys) o = put_str(o, " ("), o = put_str(o, sys->name), o = put_str(o, "+"), o = put_hex(o, ip - sys->lo), o = put_str(o, ")");
+    if (r->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && r->NumberParameters >= 2)
+        o = put_str(o, r->ExceptionInformation[0] ? " writing " : " reading "), o = put_hex(o, r->ExceptionInformation[1]);
+    o = put_str(o, sys ? ": not the driver's, the process ends\n" : ": the driver's, that one is left out\n");
+    DWORD w = 0;
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), b, (DWORD)(o - b), &w, nullptr);
+    return sys ? EXCEPTION_CONTINUE_SEARCH : EXCEPTION_EXECUTE_HANDLER;
+}
+}  // namespace
+#endif
+#ifdef _WIN32
 __declspec(noinline) VkResult guarded_graphics(VkPipelineCache cache, const VkGraphicsPipelineCreateInfo* ci, VkPipeline* pl) {
+    sys_mods_once();
     __try {
         return vkCreateGraphicsPipelines(dev.device, cache, 1, ci, nullptr, pl);
-    } __except (1) {
+    } __except (driver_fault_filter(GetExceptionInformation(), "a graphics pipeline")) {
         *pl = VK_NULL_HANDLE;   // (whatever the driver wrote before it faulted is not a pipeline)
         note_driver_fault();
         logf("vk: the driver faulted compiling a graphics pipeline (exception %#lx): that one is left out", (unsigned long)GetExceptionCode());
@@ -1458,9 +1509,10 @@ __declspec(noinline) VkResult guarded_graphics(VkPipelineCache cache, const VkGr
     }
 }
 __declspec(noinline) VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
+    sys_mods_once();
     __try {
         return vkCreateComputePipelines(dev.device, cache, 1, ci, nullptr, pl);
-    } __except (1) {
+    } __except (driver_fault_filter(GetExceptionInformation(), "a compute pipeline")) {
         *pl = VK_NULL_HANDLE;   // (whatever the driver wrote before it faulted is not a pipeline)
         note_driver_fault();
         logf("vk: the driver faulted compiling a compute pipeline (exception %#lx): that one is left out", (unsigned long)GetExceptionCode());
@@ -1547,9 +1599,10 @@ bool gpl_libs_cached() {
 // the process. The same answer as those guards: that program is left out.
 #ifdef _WIN32
 __declspec(noinline) VkResult guarded_shader_module(const VkShaderModuleCreateInfo* ci, VkShaderModule* m) {
+    sys_mods_once();
     __try {
         return vkCreateShaderModule(dev.device, ci, nullptr, m);
-    } __except (1) {
+    } __except (driver_fault_filter(GetExceptionInformation(), "a shader module")) {
         *m = VK_NULL_HANDLE;   // (whatever the driver wrote before it faulted is not a module)
         note_driver_fault();
         logf("vk: the driver faulted creating a shader module (exception %#lx): that program is left out",

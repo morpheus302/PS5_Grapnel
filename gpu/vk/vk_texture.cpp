@@ -6028,6 +6028,8 @@ void texture_frame(uint64_t completed) {
     if (frame_no % 600 == 0) {
         vma_log_heaps();
         vma_log_image_blocks();
+        void lazy_modules_report();   // (vk_progcache.cpp)
+        lazy_modules_report();   // (ps5, lot 87: the packed SPIR-V of the lazy shader modules, vk_progcache.cpp)
         {
             std::lock_guard lk(pool_mu);
             logf("vk: render target images: %llu reused from the pool, %llu made new, %llu destroyed from it; it holds %llu "

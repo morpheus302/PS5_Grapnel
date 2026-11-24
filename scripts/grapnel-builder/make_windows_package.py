@@ -344,7 +344,9 @@ minutes) ; la console n'a plus rien à compiler en jouant. Le cache fait sous Wi
 L'envoi à la console (étape 6, facultative) : l'adresse IP de la console, puis « Envoyer ». Il passe par FTP : le serveur
 FTP de la console s'il y en a un (port 2121), sinon ftpsrv, envoyé à son chargeur d'ELF (port 9021). Vos parties sont
 d'abord copiées sur ce PC (dans le dossier de sortie, console-saves), la fenêtre demande avant de remplacer quoi que ce soit,
-et seuls /data/homebrew/GRPN00001 et /data/grapnel sont touchés. Un envoi coupé reprend là où il en était.
+et seuls le dossier du titre, celui du fichier du jeu et /data/grapnel sont touchés. Un envoi coupé reprend là où il en était.
+Le titre peut aller sur le stockage interne ou sur le disque d'extension (/mnt/ext1, ShadowMountPlus 1.7beta4 ou plus) :
+vos parties et réglages restent alors dans /data/grapnel.
 
 Le message de Windows (SmartScreen) ou de l'antivirus
 -------------------------------------------------------
@@ -383,8 +385,10 @@ the console then has nothing to compile as you play. The cache made on Windows i
 
 Sending to the console (step 6, optional): the console's IP address, then "Send". It goes over FTP: the console's FTP
 server if one runs (port 2121), else ftpsrv, sent to its ELF loader (port 9021). Your saves are copied to this PC first (in
-the output folder, console-saves), the window asks before anything is replaced, and only /data/homebrew/GRPN00001 and
-/data/grapnel are touched. A send cut short carries on where it stopped.
+the output folder, console-saves), the window asks before anything is replaced, and only the title's folder, the game
+file's folder and /data/grapnel are touched. A send cut short carries on where it stopped. The title can go to the internal
+storage or to the extension disk (/mnt/ext1, ShadowMountPlus 1.7beta4 or newer): your saves and settings stay in
+/data/grapnel then.
 
 Windows' SmartScreen or an antivirus: Grapnel.exe is not signed. If Windows says "Windows protected your PC", click "More
 info", then "Run anyway". An antivirus may scan or block the folder's programs (clang.exe, ld.lld.exe, zbic_unpack.exe,
@@ -504,7 +508,7 @@ def main():
     ap.add_argument("--out", help="default dist/next/grapnel-windows-<version>")
     ap.add_argument("--stage", default=os.path.join(PS5, "build", "grapnel-windows", "stage"))
     ap.add_argument("--cache", default=os.path.join(PS5, "build", "grapnel-windows", "downloads"))
-    ap.add_argument("--toolchain", default=os.path.join(PS5, "build", "grapnel-windows", "toolchain", "grapnel-toolchain-0.3-windows-x64"),
+    ap.add_argument("--toolchain", default=os.path.join(PS5, "build", "grapnel-windows", "toolchain", "grapnel-toolchain-0.3.1-windows-x64"),
                     help="make_toolchain.py --system windows-x64's folder")
     ap.add_argument("--mingw", default=os.path.expanduser("~/.local/opt/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64"),
                     help="llvm-mingw for Linux: builds Grapnel.exe and the two helper programs")

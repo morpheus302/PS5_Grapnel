@@ -17,10 +17,18 @@
 
 namespace mkwvk {
 
+struct PackedSpirv;   // (ps5, lot 87, vk_progcache.cpp: a stage's SPIR-V kept packed, lazy shader modules)
+
 struct Stage {
     int nvn_stage = 0;   // 0 vertex, 1 fragment, 5 compute (what its banks are read for)
     VkShaderStageFlagBits vk_stage = VK_SHADER_STAGE_VERTEX_BIT;
     VkShaderModule module = VK_NULL_HANDLE;
+    // (ps5, lot 87, after Longshot Oberon: the driver's copies of the SPIR-V of the programs read from the program cache, one
+    // VkShaderModule each, kept for the session) A stage read from the cache keeps its SPIR-V here, zstd-packed, and module is a
+    // tagged stand-in (vk_progcache.cpp lazy_pack): the pipeline functions make a real module of it for the moment of a build and
+    // destroy it after (lazy_modules_install). Null: module is the driver's own, as before. Here and not in Program, whose size
+    // is part of the translator's stamp
+    std::shared_ptr<const PackedSpirv> packed;
     Shader::Info info;
     std::vector<uint8_t> c1;   // its c1 constants (the code area's tail)
     // (longshot) its SPIR-V's OpPhi instructions (fallback_size_policy.h), noted where the SPIR-V is written to or read from the
@@ -159,6 +167,15 @@ bool program_cache_complete_graphics(const Program& p);
 /// (longshot) Lets go of the VkShaderModules of ready programs whose pipelines are built and whose stages can be remade from
 /// longshot_programs.bin (or are compute stages that need no another pipeline); returns how many modules were destroyed
 size_t program_cache_drop_modules();
+/// (ps5, lot 87, Longshot #1844 as Longshot Oberon carries it) A graphics program the load at create just read (vk_programs.cpp
+/// load_work), every noted pipeline of its variant built from the caches: its modules let go now, where every stage can be remade
+/// from the program cache file (program_cache_complete_graphics, on the worker that builds a new state variant in play). Not a
+/// fallback program's, not one already let go under another program. Returns the modules let go
+size_t program_cache_drop_loaded(Program& p);
+/// (ps5, lot 87) Whether the load at create lets its programs' modules go (RX_VK_DROP_LOADED_MODULES; on by default on the console)
+bool drop_loaded_modules_on();
+/// (ps5, lot 87) Programs whose modules program_cache_complete_graphics made again, for the log
+int64_t program_cache_remade();
 /// (longshot) precompile_run built p's noted graphics pipelines before the title: program_cache_drop_modules may let its graphics
 /// modules go (an un-noted program or variant keeps them for its first draw in play)
 void program_cache_note_built(const Program& p);

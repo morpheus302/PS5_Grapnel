@@ -13,7 +13,8 @@ The pages, as the player validated them (notes-agents/assistant-constructeur.md,
     4 Game      the build (about 30 min): a bar, the step, the time left; "Chain the shaders automatically" (on by default)
     5 Shaders   the driver's cache prepared on this PC (the core's step 7); where this PC cannot (Windows, until the
                 preparation is ported), the page says so and sets up the fallback: the console's own preparation
-    6 Console   how to copy the two folders to the console (sending them from here: a later version)
+    6 Console   the title sent to the console over FTP (grapnel_send.py), to its internal storage or its extension disk
+                (/mnt/ext1), or how to copy the folders by hand
 On every page: the steps along the top (done ones ticked) with Back; at the bottom Open the folder, Copy the report, the log
 (hidden until asked), a file's CRC32, Cancel, Next. A game already built in the output folder: the first page offers to go
 straight to the shaders or to the console.
@@ -40,6 +41,24 @@ WINDOWS = os.name == "nt"
 sys.path.insert(0, HERE)
 
 import grapnel_send  # noqa: E402
+
+
+def probe_places(ip, port=grapnel_send.FTP_PORT):
+    """grapnel_send.probe(), and when the console's FTP server answers: its extension disks and where the title and the game
+    file are (volumes: None when that could not be asked)"""
+    found = grapnel_send.probe(ip, port=port)
+    found["volumes"] = None
+    if found["ftp"]:
+        try:
+            c = grapnel_send.Console(ip, port, root=os.environ.get("GRAPNEL_TEST_CONSOLE_ROOT", ""), timeout=10.0)
+            try:
+                found["volumes"] = grapnel_send.volumes(c)
+                found["where"] = grapnel_send.where(c, found["volumes"])
+            finally:
+                c.close()
+        except (OSError, EOFError, grapnel_send.ftplib.Error, grapnel_send.SendError):
+            found["volumes"] = None
+    return found
 import tkinter as tk  # noqa: E402
 from tkinter import filedialog, messagebox, ttk  # noqa: E402
 
@@ -121,8 +140,28 @@ T = {
                          "la console proposera « Préparer les shaders ».",
         "fallback_missing": "La liste des shaders manque : relancez la construction (étape 4).",
         "p_console": "Étape 6 sur 6 : la console",
-        "console_intro": "Facultatif : envoyer le titre à la console par le réseau. Vos parties sont d'abord copiées sur ce PC ; "
-                         "rien d'autre que /data/homebrew/GRPN00001 et /data/grapnel n'est touché sur la console.",
+        "console_intro": "Facultatif : envoyer le titre à la console par le réseau. Vos parties sont d'abord copiées sur ce PC. "
+                         "Sur la console, seuls le dossier du titre (GRPN00001), celui du jeu et /data/grapnel sont touchés : "
+                         "jamais les autres jeux.",
+        "console_place": "Installer le titre et le fichier du jeu sur :",
+        "place_internal": "le stockage interne (/data)",
+        "place_ext": "le disque d'extension ({vol})",
+        "console_vols": "Disque d'extension trouvé : {vols}. La place libre n'est pas connue (le serveur FTP ne la donne pas).",
+        "console_vol_none": "Aucun disque d'extension sur la console : le titre ira sur le stockage interne.",
+        "console_vol_later": "Le disque d'extension sera cherché à l'envoi, une fois le serveur FTP lancé.",
+        "console_title_at": "Le titre est déjà sur {where}.",
+        "console_no_volume": "Le disque d'extension {vol} n'est pas sur la console : rien n'a été envoyé. Branchez-le, ou "
+                             "choisissez le stockage interne.",
+        "console_elsewhere": "Le titre est aussi sur {old} : une fois l'envoi relu, la fenêtre proposera de le retirer.",
+        "console_move_title_title": "Retirer l'ancien titre ?",
+        "console_move_title": "Le titre est maintenant sur {new}, envoyé et relu.\n\nUn ancien exemplaire est encore là :\n{old}\n\n"
+                              "Le retirer ? Deux titres GRPN00001 gêneraient ShadowMountPlus. Vos parties sont dans "
+                              "/data/grapnel : elles n'y sont pas, et elles restent.",
+        "console_move_nup_title": "Effacer l'ancienne copie du jeu ?",
+        "console_move_nup": "Le fichier du jeu est maintenant sur {new}, avec sa taille.\n\nUne ancienne copie est encore là :\n"
+                            "{old} ({gb:.1f} Go)\n\nL'effacer ? Cela libère {gb:.1f} Go.",
+        "console_removed": "Retiré : {what}.",
+        "console_kept": "Gardé (à votre demande) : {what}.",
         "console_ip": "Adresse IP de la console", "console_test": "Tester la connexion",
         "console_testing": "Test de la connexion…",
         "console_ftp": "✓ La console répond : son serveur FTP est prêt (port 2121).",
@@ -131,7 +170,7 @@ T = {
                              "console (port 2121), puis testez à nouveau.",
         "console_none": "Rien ne répond à cette adresse (ports 2121 et 9021). La console est-elle allumée, débridée, sur le même "
                         "réseau, avec son chargeur d'ELF ou un serveur FTP lancé ?",
-        "console_nup": "Envoyer aussi le fichier du jeu (/data/grapnel/game.nup), s'il n'y est pas déjà (26 Go)",
+        "console_nup": "Envoyer aussi le fichier du jeu (game.nup, 26 Go), s'il n'y est pas déjà avec sa taille",
         "console_send": "Envoyer à la console »", "console_not_built": "Construisez d'abord le jeu (étape 4).",
         "console_ftpsrv_sent": "Le serveur FTP est envoyé au chargeur d'ELF de la console…",
         "console_ftp_late": "Le serveur FTP envoyé ne répond pas sur le port 2121.",
@@ -144,16 +183,19 @@ T = {
         "console_rate": "{mb:.1f} Mo/s, environ {m} min restantes",
         "console_verifying": "Relecture : les tailles et le CRC32 de l'eboot…",
         "console_ok": "✓ Envoyé et relu : chaque fichier a sa taille, et l'eboot son CRC32 ({crc}).\n\n"
-                      "L'enregistrement : ShadowMountPlus enregistre de lui-même ce qu'il trouve dans /data/homebrew, une "
+                      "L'enregistrement : ShadowMountPlus enregistre de lui-même ce qu'il trouve dans {homebrew}, une "
                       "minute environ après la fin de l'envoi ; le titre « Grapnel » apparaît alors sur l'écran d'accueil. Sans "
-                      "ShadowMountPlus, enregistrez /data/homebrew/GRPN00001 avec votre outil habituel.",
+                      "ShadowMountPlus, enregistrez {homebrew}/GRPN00001 avec votre outil habituel.",
         "console_bad": "✗ La relecture ne correspond pas :\n{what}\n\nRenvoyez : ce qui est juste est gardé.",
         "console_failed": "✗ L'envoi s'est arrêté : {e}\nRenvoyer reprendra là où il en était.",
         "console_cancelled": "Arrêté. Renvoyer reprendra là où c'en était.",
         "console_manual": "Ou à la main (FTP ou gestionnaire de fichiers de la console) :\n\n"
                         "1. homebrew\\GRPN00001  →  /data/homebrew/GRPN00001, puis enregistrez le titre.\n"
                         "2. data\\grapnel  →  /data/grapnel (si la console a déjà /data/hookshot : voyez la notice).\n"
-                        "3. Votre fichier du jeu  →  /data/grapnel/game.nup.\n\n"
+                        "3. Votre fichier du jeu  →  /data/grapnel/game.nup.\n"
+                        "Sur le disque d'extension : homebrew\\GRPN00001  →  /mnt/ext1/homebrew/GRPN00001, le fichier du jeu  →  "
+                        "/mnt/ext1/grapnel/game.nup, et la ligne HOOKSHOT_PS5_NUP=/mnt/ext1/grapnel/game.nup dans "
+                        "/data/grapnel/hookshot_env.txt.\n\n"
                         "Ces dossiers viennent de votre jeu : ne les partagez jamais. Tout est expliqué dans INSTALL.fr.txt.",
         "open_install": "Ouvrir la notice", "no_install": "La notice n'existe pas encore : construisez d'abord.",
         "confirm_cancel": "Arrêter ? Ce qui est fait est gardé : relancer reprendra là.",
@@ -271,8 +313,28 @@ T = {
                          "the shaders\".",
         "fallback_missing": "The shaders' list is missing: build again (step 4).",
         "p_console": "Step 6 of 6: the console",
-        "console_intro": "Optional: send the title to the console over the network. Your saves are copied to this PC first; "
-                         "nothing but /data/homebrew/GRPN00001 and /data/grapnel is touched on the console.",
+        "console_intro": "Optional: send the title to the console over the network. Your saves are copied to this PC first. On "
+                         "the console, only the title's folder (GRPN00001), the game's folder and /data/grapnel are touched: never "
+                         "the other games.",
+        "console_place": "Install the title and the game file on:",
+        "place_internal": "the internal storage (/data)",
+        "place_ext": "the extension disk ({vol})",
+        "console_vols": "Extension disk found: {vols}. Its free space is not known (the FTP server does not tell it).",
+        "console_vol_none": "No extension disk on the console: the title goes to the internal storage.",
+        "console_vol_later": "The extension disk is looked for when sending, once the FTP server runs.",
+        "console_title_at": "The title is already on {where}.",
+        "console_no_volume": "The extension disk {vol} is not on the console: nothing was sent. Plug it in, or choose the "
+                             "internal storage.",
+        "console_elsewhere": "The title is also on {old}: once the send is read back, the window offers to remove it.",
+        "console_move_title_title": "Remove the old title?",
+        "console_move_title": "The title is now on {new}, sent and read back.\n\nAn old copy is still there:\n{old}\n\n"
+                              "Remove it? Two GRPN00001 titles would confuse ShadowMountPlus. Your saves are in /data/grapnel: "
+                              "they are not in it, and they stay.",
+        "console_move_nup_title": "Delete the old copy of the game?",
+        "console_move_nup": "The game file is now on {new}, with its size.\n\nAn old copy is still there:\n{old} ({gb:.1f} GB)"
+                            "\n\nDelete it? That frees {gb:.1f} GB.",
+        "console_removed": "Removed: {what}.",
+        "console_kept": "Kept (as you asked): {what}.",
         "console_ip": "Console's IP address", "console_test": "Test the connection",
         "console_testing": "Testing the connection…",
         "console_ftp": "✓ The console answers: its FTP server is ready (port 2121).",
@@ -281,7 +343,7 @@ T = {
                              "console (port 2121), then test again.",
         "console_none": "Nothing answers at that address (ports 2121 and 9021). Is the console on, jailbroken, on the same "
                         "network, with its ELF loader or an FTP server running?",
-        "console_nup": "Send the game file too (/data/grapnel/game.nup), if it is not there already (26 GB)",
+        "console_nup": "Send the game file too (game.nup, 26 GB), if it is not there already with its size",
         "console_send": "Send to the console »", "console_not_built": "Build the game first (step 4).",
         "console_ftpsrv_sent": "The FTP server goes to the console's ELF loader…",
         "console_ftp_late": "The FTP server sent does not answer on port 2121.",
@@ -294,16 +356,19 @@ T = {
         "console_rate": "{mb:.1f} MB/s, about {m} min left",
         "console_verifying": "Reading back: the sizes and the eboot's CRC32…",
         "console_ok": "✓ Sent and read back: every file has its size, and the eboot its CRC32 ({crc}).\n\n"
-                      "Registering: ShadowMountPlus registers by itself what it finds in /data/homebrew, about a minute after "
+                      "Registering: ShadowMountPlus registers by itself what it finds in {homebrew}, about a minute after "
                       "the send ends; \"Grapnel\" then shows on the home screen. Without ShadowMountPlus, register "
-                      "/data/homebrew/GRPN00001 with your usual tool.",
+                      "{homebrew}/GRPN00001 with your usual tool.",
         "console_bad": "✗ The read back does not match:\n{what}\n\nSend again: what is right is kept.",
         "console_failed": "✗ The send stopped: {e}\nSending again carries on from there.",
         "console_cancelled": "Stopped. Sending again carries on from there.",
         "console_manual": "Or by hand (FTP or the console's file manager):\n\n"
                         "1. homebrew\\GRPN00001  →  /data/homebrew/GRPN00001, then register the title.\n"
                         "2. data\\grapnel  →  /data/grapnel (if the console already has /data/hookshot: see the notes).\n"
-                        "3. Your game file  →  /data/grapnel/game.nup.\n\n"
+                        "3. Your game file  →  /data/grapnel/game.nup.\n"
+                        "On the extension disk: homebrew\\GRPN00001  →  /mnt/ext1/homebrew/GRPN00001, the game file  →  "
+                        "/mnt/ext1/grapnel/game.nup, and the line HOOKSHOT_PS5_NUP=/mnt/ext1/grapnel/game.nup in "
+                        "/data/grapnel/hookshot_env.txt.\n\n"
                         "These folders come from your game: never share them. All of it is in INSTALL.en.txt.",
         "open_install": "Open the notes", "no_install": "The notes are not there yet: build first.",
         "confirm_cancel": "Stop? What is done is kept: starting again carries on from there.",
@@ -595,7 +660,8 @@ class Assistant:
         outs = [out] + [o for o in self.settings.get("outs", []) if o != out] if out else self.settings.get("outs", [])
         self.settings.update(nup=self.nup_var.get(), out=out, icons=bool(self.icons_var.get()),
                              memory=self.memory_var.get(), chain=bool(self.chain_var.get()), outs=outs[:6],
-                             console_ip=self.ip_var.get().strip(), send_nup=bool(self.send_nup_var.get()))
+                             console_ip=self.ip_var.get().strip(), send_nup=bool(self.send_nup_var.get()),
+                             console_place=self.place_var.get())
         try:
             os.makedirs(os.path.dirname(settings_path()), exist_ok=True)
             with open(settings_path(), "w", encoding="utf-8") as f:
@@ -670,6 +736,10 @@ class Assistant:
         self.chain_var = tk.IntVar(value=1 if self.settings.get("chain", True) else 0)
         self.ip_var = tk.StringVar(value=self.settings.get("console_ip", ""))
         self.send_nup_var = tk.IntVar(value=1 if self.settings.get("send_nup", True) else 0)
+        # (where step 6 installs: the internal storage or an extension disk, /mnt/ext1; the title's place once the console says)
+        chosen = getattr(self.args, "place", None)   # (--place, tests: as if chosen on the page)
+        self.place_var = tk.StringVar(value=chosen or self.settings.get("console_place", grapnel_send.INTERNAL))
+        self.place_touched = bool(chosen)
         self.console_found = None
         self.nup_var.trace_add("write", lambda *a: self.root.after(300, self.nup_changed))
 
@@ -1077,6 +1147,12 @@ class Assistant:
         ttk.Button(row, text=t["console_test"], command=self.console_test).pack(side="left")
         self.console_note = ttk.Label(self.body, text="", wraplength=760, justify="left")
         self.console_note.pack(anchor="w", pady=(6, 0))
+        ttk.Label(self.body, text=t["console_place"]).pack(anchor="w", pady=(8, 0))
+        self.place_box = ttk.Frame(self.body)
+        self.place_box.pack(anchor="w", padx=12)
+        self.place_radios = {}
+        for q in (grapnel_send.INTERNAL, "/mnt/ext1"):
+            self.place_radio(q)
         ttk.Checkbutton(self.body, text=t["console_nup"], variable=self.send_nup_var).pack(anchor="w", pady=(8, 0))
         self.send_btn = ttk.Button(self.body, text=t["console_send"], command=self.console_send, state="disabled")
         self.send_btn.pack(anchor="w", pady=8)
@@ -1093,6 +1169,18 @@ class Assistant:
         if self.running and self.running[0] == "console":
             self.send_btn.config(state="disabled")
 
+    def place_name(self, place):
+        return self.t["place_internal"] if place == grapnel_send.INTERNAL else self.t["place_ext"].format(vol=place)
+
+    def place_radio(self, place):
+        """One choice of where to install (made when the page is, /mnt/ext0 too once the console has it)"""
+        if place in self.place_radios or not hasattr(self, "place_box") or not self.place_box.winfo_exists():
+            return
+        r = ttk.Radiobutton(self.place_box, text=self.place_name(place), value=place, variable=self.place_var,
+                            command=lambda: setattr(self, "place_touched", True))
+        r.pack(anchor="w")
+        self.place_radios[place] = r
+
     def ftpsrv_elf(self):
         p = os.path.join(self.parts.get("toolchain") or "", "ftpsrv", "ftpsrv-ps5.elf")
         return p if os.path.isfile(p) else None
@@ -1102,7 +1190,7 @@ class Assistant:
         if not ip:
             return
         self.console_note.config(text=self.t["console_testing"], foreground="#555")
-        threading.Thread(target=lambda: self.events.put(("console_probe", ip, grapnel_send.probe(ip))), daemon=True).start()
+        threading.Thread(target=lambda: self.events.put(("console_probe", ip, probe_places(ip))), daemon=True).start()
 
     def on_console_probe(self, ip, found):
         self.console_found = (ip, found)
@@ -1116,6 +1204,22 @@ class Assistant:
             text = t["console_elfldr"] if ok else t["console_no_ftpsrv"]
         else:
             text, ok = t["console_none"], False
+        if found.get("volumes") is not None:   # (the FTP server answered: the disks and where the title is are known)
+            vols = found["volumes"]
+            for q in vols:
+                self.place_radio(q)
+            for q, r in self.place_radios.items():
+                r.config(state="normal" if q == grapnel_send.INTERNAL or q in vols else "disabled")
+            text += "\n" + (t["console_vols"].format(vols=", ".join(vols)) if vols else t["console_vol_none"])
+            at = found["where"]["title"]
+            if at:
+                text += "\n" + t["console_title_at"].format(where=", ".join(self.place_name(q) for q in at))
+            if not self.place_touched:   # (by default: where the title is, else the internal storage)
+                self.place_var.set(at[0] if at else grapnel_send.INTERNAL)
+            if self.place_var.get() not in [grapnel_send.INTERNAL] + vols:
+                self.place_var.set(grapnel_send.INTERNAL)
+        elif found["elfldr"] and not found["ftp"]:
+            text += "\n" + t["console_vol_later"]
         if ok and not built(self.out()).get("game"):
             text, ok = text + "\n" + t["console_not_built"], False
         self.console_note.config(text=text, foreground="#1a7f37" if ok else "#b42318")
@@ -1127,7 +1231,7 @@ class Assistant:
     def console_send(self):
         if self.running:
             return
-        ip, out = self.ip_var.get().strip(), self.out()
+        ip, out, place = self.ip_var.get().strip(), self.out(), self.place_var.get() or grapnel_send.INTERNAL
         nup = self.nup_var.get().strip() if self.send_nup_var.get() else None
         self.save_settings()
         self.console_stop, self.console_answer = threading.Event(), queue.Queue()
@@ -1138,10 +1242,10 @@ class Assistant:
         self.result_text.config(text="")
         self.update_next()
         keep_awake(True)
-        self.add_log("console: sending to %s" % ip)
-        threading.Thread(target=self.console_worker, args=(ip, out, nup, self.ftpsrv_elf()), daemon=True).start()
+        self.add_log("console: sending to %s, %s" % (ip, place))
+        threading.Thread(target=self.console_worker, args=(ip, out, nup, self.ftpsrv_elf(), place), daemon=True).start()
 
-    def console_worker(self, ip, out, nup, elf):
+    def console_worker(self, ip, out, nup, elf, place=grapnel_send.INTERNAL):
         t, put = self.t, self.events.put
         try:
             found = grapnel_send.probe(ip)
@@ -1154,7 +1258,11 @@ class Assistant:
                     raise grapnel_send.SendError(t["console_ftp_late"])
             c = grapnel_send.Console(ip, root=os.environ.get("GRAPNEL_TEST_CONSOLE_ROOT", ""))   # (tests: a folder for its /)
             try:
-                p = grapnel_send.plan(c, out, nup)
+                if place != grapnel_send.INTERNAL and place not in grapnel_send.volumes(c):
+                    raise grapnel_send.SendError(t["console_no_volume"].format(vol=place))
+                p = grapnel_send.plan(c, out, nup, place)
+                if p["title_elsewhere"]:
+                    put(("console_info", t["console_elsewhere"].format(old=", ".join(p["title_elsewhere"]))))
                 saved = None
                 if p["saves"]:
                     put(("console_info", t["console_saving"]))
@@ -1166,10 +1274,28 @@ class Assistant:
                         raise grapnel_send.Cancelled("not replaced")
                 grapnel_send.send(c, out, nup if p["nup"] and p["nup"]["send"] else None,
                                   report=lambda *a: put(("console_progress",) + a), cancel=self.console_stop,
-                                  log=lambda line: put(("line", "console: " + line)), host=ip)
+                                  log=lambda line: put(("line", "console: " + line)), host=ip, place=place, nup_at=p["nup_at"])
                 put(("console_info", t["console_verifying"]))
-                bad, crc = grapnel_send.verify(c, out, nup)
-                put(("console_done", bad, crc, None))
+                bad, crc = grapnel_send.verify(c, out, nup, place, p["nup_at"])
+                notes = []
+                if not bad:   # (what is left at the other place: removed only when asked, once the send is read back)
+                    new = self.place_name(place)
+                    for old in p["title_elsewhere"]:
+                        put(("console_question", t["console_move_title_title"], t["console_move_title"].format(new=new, old=old)))
+                        if self.console_answer.get():
+                            grapnel_send.remove_title(c, old, out, ip)
+                            notes.append(t["console_removed"].format(what=old))
+                        else:
+                            notes.append(t["console_kept"].format(what=old))
+                    for old, size in p["nup_elsewhere"]:
+                        put(("console_question", t["console_move_nup_title"],
+                             t["console_move_nup"].format(new=new, old=old, gb=size / 1e9)))
+                        if self.console_answer.get():
+                            grapnel_send.remove_nup(c, old)
+                            notes.append(t["console_removed"].format(what=old))
+                        else:
+                            notes.append(t["console_kept"].format(what=old))
+                put(("console_done", bad, crc, None, place, notes))
             finally:
                 c.close()
         except grapnel_send.Cancelled:
@@ -1189,6 +1315,10 @@ class Assistant:
         self.add_log("console: " + text.replace("\n", " "))
         self.console_answer.put(True if getattr(self.args, "auto_send", False) else messagebox.askyesno(t["console_ask_title"], text))
 
+    def on_console_question(self, title, text):
+        self.add_log("console: " + text.replace("\n", " "))
+        self.console_answer.put(True if getattr(self.args, "auto_send", False) else messagebox.askyesno(title, text))
+
     def on_console_progress(self, done, total, rate, left, current):
         if not hasattr(self, "bar") or not self.bar.winfo_exists():
             return
@@ -1196,7 +1326,7 @@ class Assistant:
         self.step_text.config(text=current)
         self.left_text.config(text=self.t["console_rate"].format(mb=rate / 1e6, m=minutes(left) if left else "?"))
 
-    def on_console_done(self, bad, crc, err):
+    def on_console_done(self, bad, crc, err, place=grapnel_send.INTERNAL, notes=()):
         t = self.t
         self.running = None
         keep_awake(False)
@@ -1209,7 +1339,10 @@ class Assistant:
         elif bad:
             text, colour = t["console_bad"].format(what="\n".join(bad[:8])), "#b42318"
         else:
-            text, colour = t["console_ok"].format(crc="%d, 0x%08X" % (crc, crc)), "#1a7f37"
+            homebrew = grapnel_send.place_paths(place)[0].rsplit("/", 1)[0]
+            text, colour = t["console_ok"].format(crc="%d, 0x%08X" % (crc, crc), homebrew=homebrew), "#1a7f37"
+            if notes:
+                text += "\n\n" + "\n".join(notes)
             if hasattr(self, "bar") and self.bar.winfo_exists():
                 self.bar.config(value=1000)
         self.add_log("console: " + text.replace("\n", " "))
@@ -1558,7 +1691,8 @@ def main():
     ap.add_argument("--screenshot-after", type=float, default=0, help="(tests) close the window after this many seconds")
     ap.add_argument("--page", type=int, default=0, help="(tests) open on this page (1 to 6), the ones before taken as done")
     ap.add_argument("--auto-send", action="store_true", help="(tests) step 6: send as soon as the console answers, and say yes "
-                                                               "to the replacement")
+                                                               "to the replacement and to the removals")
+    ap.add_argument("--place", choices=grapnel_send.PLACES, help="(tests) step 6: where to install, as if chosen on the page")
     args = ap.parse_args()
     if WINDOWS:
         import ctypes

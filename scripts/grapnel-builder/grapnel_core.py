@@ -55,7 +55,7 @@ if NX2 not in sys.path:
     sys.path.insert(0, NX2)
 import toolchain_ps5  # noqa: E402  (only os and subprocess: where the SDK and PS5_Vulkan are, the title's id and name)
 
-VERSION = "0.2"
+VERSION = "0.2.1"
 STEPS = ["Reading the game's program", "Translating it to C", "Compiling and linking for the console",
          "Putting the title and data folders together", "Making the button icons",
          "Listing the game's shaders", "Preparing the shaders on this PC", "Writing the notes"]

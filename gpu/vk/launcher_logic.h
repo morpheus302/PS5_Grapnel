@@ -56,6 +56,8 @@ enum Text : int {
     T_PREPARING, T_PREP_READING, T_PREP_STEP_MESH, T_PREP_STEP_COMPUTE, T_PREP_STEP_PIPELINES, T_PREP_SETTLING, T_PREP_COUNT,
     T_PREP_LEFT, T_PREP_LEFT_UNKNOWN, T_PREP_MEMORY, T_PREP_HELP, T_PREP_LATER, T_PREP_STOPPING, T_PREP_DONE, T_PREP_STOPPED,
     T_PREP_LOW_MEMORY, T_PREP_STALL, T_PREP_NOTHING, T_PREP_RESTARTING, T_PREP_CANNOT_START,
+    // (lot 88) no game file (host/hos_main.c hos_ps5_game_missing: HOOKSHOT_PS5_NUP's file and game.nup both missing)
+    T_NO_GAME,
     T_COUNT
 };
 struct TextEntry {
@@ -317,6 +319,10 @@ inline constexpr TextEntry kTexts[] = {
     {T_PREP_RESTARTING, "Starting again...", "Redémarrage..."},
     {T_PREP_CANNOT_START, "The preparation needs a fresh start of the game: it starts again and begins.",
      "La préparation demande un nouveau démarrage du jeu : il redémarre et commence."},
+    {T_NO_GAME, "The game file cannot be read (%s). The game cannot start: check that its drive is connected and that "
+                "HOOKSHOT_PS5_NUP in hookshot_env.txt names it, then start again. QUIT closes.",
+     "Le fichier du jeu est illisible (%s). Le jeu ne peut pas démarrer : vérifiez que son disque est branché et que "
+     "HOOKSHOT_PS5_NUP, dans hookshot_env.txt, le désigne, puis relancez. QUITTER ferme le jeu."},
 };
 static_assert(sizeof kTexts / sizeof kTexts[0] == T_COUNT, "a text for each id, in order");
 inline const char* text(Text id, Lang l) {
@@ -600,10 +606,12 @@ inline Text why_text(Why w) {
 /// env: HOOKSHOT_PS5_LAUNCHER (RX_VK_LAUNCHER off the console), nullptr when unset; mode: launcher= (0 always, 1 only when
 /// needed); r1: R1 held as the screen would show; back (lot 73): the in-game menu's Back to the Grapnel screen asked for it
 /// (launcher_back.h: its file found), which shows it whatever the mode. *why: the reason, for the log
-inline bool show(const char* env, bool console, int mode, Verdict v, bool r1, bool back, bool prep, const char** why) {
+/// (lot 88) no_game: the game file cannot be read (host/hos_main.c hos_ps5_game_missing): shown to say so, whatever the mode
+inline bool show(const char* env, bool console, int mode, Verdict v, bool r1, bool back, bool prep, bool no_game, const char** why) {
     if (env && *env == '0') return *why = "switched off by the development settings", false;
     if (env && *env) return *why = "asked by the development settings", true;
     if (!console) return *why = "off the console it shows only when asked", false;
+    if (no_game) return *why = "the game file cannot be read: the screen says so and does not start the game", true;
     if (back) return *why = "asked from the game: its menu's Back to the Grapnel screen", true;
     if (mode != 1) return *why = "launch screen: always", true;
     if (prep) return *why = "only when needed: the shaders are to prepare (HOOKSHOT_PS5_PREPARE=1)", true;
@@ -611,11 +619,14 @@ inline bool show(const char* env, bool console, int mode, Verdict v, bool r1, bo
     if (r1) return *why = "only when needed: R1 held", true;
     return *why = "only when needed: nothing to say", false;
 }
+inline bool show(const char* env, bool console, int mode, Verdict v, bool r1, bool back, bool prep, const char** why) {
+    return show(env, console, mode, v, r1, back, prep, false, why);
+}
 inline bool show(const char* env, bool console, int mode, Verdict v, bool r1, bool back, const char** why) {
-    return show(env, console, mode, v, r1, back, false, why);
+    return show(env, console, mode, v, r1, back, false, false, why);
 }
 inline bool show(const char* env, bool console, int mode, Verdict v, bool r1, const char** why) {
-    return show(env, console, mode, v, r1, false, false, why);
+    return show(env, console, mode, v, r1, false, false, false, why);
 }
 
 // ---- the pages and their buttons ----
@@ -647,6 +658,7 @@ struct State {
     // the button chosen there, 0 Prepare, 1 Ask the driver
     bool prep_button = false;
     int shaders_sel = 0;
+    bool no_game = false;   // (lot 88: the game file cannot be read: nothing starts the game, QUIT chosen)
 };
 /// What a press asks of the caller, which owns the values: a setting changed by dir, set back to its default, the driver asked
 enum ActionKind { A_NONE, A_STEP, A_DEFAULT, A_DRIVER_CHECK, A_PREPARE, A_PREPARE_STOP };   // (the last two: lot 82)
@@ -656,11 +668,12 @@ struct Action {
 };
 /// The screen shown at now. No countdown (lot 71: the player decides whether and when the game starts, the screen never does):
 /// nothing starts the game but the player
-inline void begin(State& s, int64_t now, Verdict v) {
+inline void begin(State& s, int64_t now, Verdict v, bool no_game = false) {
     s = State{};
     s.start_ns = now;
     s.counting = false;
     if (v == V_FAIL) s.home = H_SHADERS;   // (a problem: the Shaders button chosen, the reason under it)
+    if (no_game) s.no_game = true, s.home = H_QUIT;   // (lot 88: no game file: QUIT chosen, the reason under it)
 }
 /// Whole seconds left on the countdown (rounded up), 0 when it ran out; -1 when it does not run
 inline int countdown_left(const State& s, int64_t now) {
@@ -681,7 +694,7 @@ inline Action step(State& s, const Input& in, int64_t now, bool selected_held = 
         if (in.back || in.start) a.kind = A_PREPARE_STOP;
         return a;
     }
-    if (in.start) return s.outcome = PLAY, a;   // (Options: play now, from any page)
+    if (in.start && !s.no_game) return s.outcome = PLAY, a;   // (Options: play now, from any page; lot 88: not without the game file)
     switch (s.page) {
     case HOME:
         if (in.up || in.down) {
@@ -692,7 +705,9 @@ inline Action step(State& s, const Input& in, int64_t now, bool selected_held = 
         if (in.back) s.quit_armed = false;
         if (in.confirm) {
             switch (s.home) {
-            case H_PLAY: s.outcome = PLAY; break;
+            case H_PLAY:
+                if (!s.no_game) s.outcome = PLAY;   // (lot 88: no game file: nothing starts it)
+                break;
             case H_SETTINGS: s.page = SETTINGS; break;
             case H_SHADERS: s.page = SHADERS; break;
             case H_QUIT:

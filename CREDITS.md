@@ -31,6 +31,8 @@ Grapnel is a small layer on a great deal of other people's work. Thank you all.
   in-place readback parts Grapnel uses (`RX_VK_READBACK_IN_PLACE_PART`).
 - **[bizkut](https://github.com/bizkut)**: Forever Launcher's write broker (ps5-forever), which Grapnel's storage broker is
   adapted from, and Savage Wind, which showed that a recompiled game could run on a jailbroken PS5.
+- **[Longshot Oberon](https://github.com/rimidalv333/longshot-oberon)** by **rimidalv333** (GPL-3.0): the lazy shader modules and
+  the freed packed SPIR-V, which give back the driver's copies of the shaders the console reads from its program cache.
 - **[mateo-cogeanu/ProsperoCraft](https://github.com/mateo-cogeanu/ProsperoCraft)**: its notes on the console's microphone
   service, which showed that the port is best made early and kept.
 - **[drakmor/ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus)**, **kstuff** and **elfldr**: the console-side

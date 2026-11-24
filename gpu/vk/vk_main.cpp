@@ -35,6 +35,7 @@ static_assert(mkwvk::kQueueGraphics == VK_QUEUE_GRAPHICS_BIT && mkwvk::kQueueCom
 #include "vk_progress.h"
 #include "vk_launcher.h"   // (lot 69: the launch screen, started_up)
 #include "vk_programs.h"
+#include "vk_progcache.h"   // (ps5, lot 87: lazy_modules_install)
 #include "mesh_mode.h"
 #include "crash_markers.h"   // (mkwvk_close_asked: a close is not a crash)
 #ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
@@ -724,6 +725,7 @@ bool create_device() {
 
 
     load_device(dev.device);
+    lazy_modules_install();   // (ps5, lot 87: the cache's programs keep packed SPIR-V, not driver modules: vk_progcache.cpp)
     // (longshot: when programs are loaded, vk_programs.h. Without mesh shaders, or with the task + mesh draws through the
     // fallback, a start keeps the fallback's programs ready, and loads at create have not been shown to be as good there)
     programs_load_decide(dev.mesh_shader && !dev.mesh_fallback && !dev.task_mesh_fallback);

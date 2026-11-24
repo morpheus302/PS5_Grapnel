@@ -49,6 +49,7 @@ void hos_ps5_block_free(void* p, size_t size);
 int hos_ps5_memory_free(uint64_t* direct_mb, uint64_t* flexible_mb, uint64_t* largest_mb);
 uint32_t hos_pad_raw_early(void);   // (host/nn_hid.c: the controllers before the game reads them)
 int hos_ps5_back_to_launcher(void);   // (lot 82: host/posix/ps5_relaunch.c, the title started again by the system)
+int hos_ps5_game_missing(char* buf, size_t cap);   // (lot 88: host/hos_main.c, the game file that cannot be read)
 }
 #endif
 
@@ -72,6 +73,10 @@ std::atomic<bool> showing{false};
 L::State st;
 L::ShaderFacts facts;
 L::Check check;
+// (lot 88) the game file cannot be read (host/hos_main.c hos_ps5_game_missing): the screen shows, says so, and nothing starts the
+// game, which stopped later without a word
+bool no_game = false;
+char no_game_line[1200];
 uint64_t stamp_now = 0;
 L::Lang lang = L::FR;
 std::string version;
@@ -382,6 +387,11 @@ void draw_home(ui::Ctx& c, const Layout& l) {
             y += h + after;
             return true;
         };
+        if (st.no_game) {   // (lot 88: the game file cannot be read: said above all, in the problem's colour)
+            char said_no_game[1600];
+            snprintf(said_no_game, sizeof said_no_game, T(L::T_NO_GAME), no_game_line);
+            said_above(10.5f * k, verdict_colour(L::V_FAIL), said_no_game, 7 * k);
+        }
         said_above(10.5f * k, st.quit_armed ? ui::rgba(246, 200, 120) : ui::kSoft, help, 7 * k);
         // (lot 82: a preparation to do or to resume is the answer to the check's problem: the help above says it, not the problem)
         if (check.verdict != L::V_OK && !CP::asks_for_screen(prep_offer))
@@ -898,6 +908,10 @@ void launcher_run() {
     }
     const auto t0 = clock_type::now();
     menu_init();   // (the options file read: the mode, the rows the screen shows)
+#ifdef __PROSPERO__
+    no_game = hos_ps5_game_missing(no_game_line, sizeof no_game_line) != 0;
+    if (no_game) logf("launcher: the game file cannot be read (%s): the screen says so and does not start the game", no_game_line);
+#endif
     const int mode = menu_launcher_mode();
     // (lot 73) the in-game menu's Back to the Grapnel screen, before the system started the title again: its file taken (read and
     // erased, one start only), and the screen shown whatever the mode. Only with HOOKSHOT_PS5_BACK_TO_LAUNCHER=1: without it the
@@ -962,7 +976,9 @@ void launcher_run() {
         if (!said.empty()) logf("launcher: preparation: %s%s", said.c_str(), prep_go_on ? ": it goes on" : ": nothing to go on with");
     }
     bool r1 = false;
-    if (kConsole && !(env && *env) && mode == 1 && check.verdict != L::V_FAIL && !back && !prep_go_on && !CP::asks_for_screen(prep_offer)) {
+    // (lot 88: not without the game file either: the screen shows then, no_game)
+    if (kConsole && !(env && *env) && mode == 1 && !no_game &&
+        check.verdict != L::V_FAIL && !back && !prep_go_on && !CP::asks_for_screen(prep_offer)) {
         // (only when needed: R1 held as the game starts shows it. The controllers come up with the first read: a little while)
         for (int i = 0; i < 30 && !r1; i++) {
             r1 = (raw_now() >> HOS_PAD_RSHOULDER & 1) != 0;
@@ -970,7 +986,7 @@ void launcher_run() {
         }
     }
     const char* why = "";
-    if (!L::show(env, kConsole, mode, check.verdict, r1, back || prep_go_on, CP::asks_for_screen(prep_offer), &why)) {
+    if (!L::show(env, kConsole, mode, check.verdict, r1, back || prep_go_on, CP::asks_for_screen(prep_offer), no_game, &why)) {
         logf("launcher: not shown (%s)", why);
         return;
     }
@@ -986,7 +1002,7 @@ void launcher_run() {
     rd = Reader{};
     read_layout();
     rd.script = getenv("RX_VK_LAUNCHER_SCRIPT");
-    L::begin(st, now_ns(), check.verdict);
+    L::begin(st, now_ns(), check.verdict, no_game);
     st.prep_button = CP::button(prep_offer);   // (lot 82)
     if (CP::asks_for_screen(prep_offer)) st.home = L::H_SHADERS;
     rd.script_t0 = st.start_ns;
@@ -999,7 +1015,7 @@ void launcher_run() {
             // (nothing on the TV after 3 s: Dear ImGui did not start, or no image came back from the display. Not a screen the
             // player can use: the game starts, as without it)
             logf("launcher: nothing drawn in 3 s: the game starts without the screen");
-            st.outcome = L::PLAY;
+            st.outcome = no_game ? L::QUIT : L::PLAY;   // (lot 88: no game file: the title closes rather than stop later)
             break;
         }
         const L::Input in = read_input(now);

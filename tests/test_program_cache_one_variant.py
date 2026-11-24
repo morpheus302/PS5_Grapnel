@@ -22,6 +22,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+# (lot 87) the lazy shader modules' calls the cut functions make (gpu/vk/vk_progcache.cpp), off here
+LAZY_STUBS = '\n// (lot 87: the lazy shader modules of gpu/vk/vk_progcache.cpp, off in this check: a module each, as before)\ninline bool lazy_modules_on() { return false; }\ninline VkShaderModule lazy_pack(Stage&, const std::vector<uint32_t>&, uint64_t) { return VK_NULL_HANDLE; }\ninline bool lazy_tagged(VkShaderModule) { return false; }\ninline void lazy_retire(Stage&) {}\n'
+
 RUN_ALL_ARGS = ["--cxx", "{cxx}"]
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +50,8 @@ def main():
     header = (ROOT / "gpu/vk/vk_shader.h").read_text(encoding="utf-8")
     draw = (ROOT / "gpu/vk/vk_draw.cpp").read_text(encoding="utf-8")
     structs = "\n".join(block(header, m) + ";" for m in ("struct Stage {", "struct Program {"))
+    # (lot 87: Stage holds its packed SPIR-V, vk_progcache.cpp's lazy shader modules: declared, and off here)
+    structs = "struct PackedSpirv;\n" + structs + LAZY_STUBS
     structs += "\n" + block(cache_h, "struct DiskRecord {") + ";"
     functions = "\n".join(block(shader, m) for m in ("VkShaderModule make_module(", "uint64_t answers_hash(", "bool answers_fit("))
     functions += "\n" + block(cache, "void idx_put(")
