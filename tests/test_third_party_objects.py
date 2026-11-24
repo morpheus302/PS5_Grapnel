@@ -146,7 +146,7 @@ class CompileOne(unittest.TestCase):
         t = tempfile.TemporaryDirectory(prefix="longshot-tpo-compile-")
         self.addCleanup(t.cleanup)
         self.root = t.name
-        self.ns = {"os": os, "hashlib": hashlib, "subprocess": subprocess, "time": time, "PLANNED": {}, "GATE": None,
+        self.ns = {"os": os, "hashlib": hashlib, "subprocess": subprocess, "time": time, "PLANNED": {}, "GATE": None, "PS5": False,
                    "OBJ_CACHE": os.path.join(self.root, "objcache"), "kit": mock.MagicMock(ROOT=self.root),
                    "no_throttle": lambda handle=None: None}
         exec(build_functions("compile_one", "cache_put", "object_key", "flag_text"), self.ns)

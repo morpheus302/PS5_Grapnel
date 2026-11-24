@@ -111,6 +111,14 @@ int main() {
           !console_menu_page("Set up for a weak laptop") && !console_menu_page("FPS counter details"));
     CHECK(!console_menu_key("handheld_profile") && !console_menu_key("dlss") && !console_menu_key("button_prompts") &&
           !console_menu_key("discord_status"));
+    // ---- (lot 86) the microphone's rows: with HOOKSHOT_PS5_MIC=1 only; the other lists' answers the same either way ----
+    CHECK(!strcmp(kConsoleMicSwitch, "HOOKSHOT_PS5_MIC"));
+    CHECK(!console_menu_key("microphone") && !console_menu_key("microphone_gain") && !console_menu_page("Test microphone"));
+    CHECK(console_menu_key("microphone", true) && console_menu_key("microphone_gain", true) &&
+          console_menu_page("Test microphone", true));
+    for (const char* k : kConsoleMicKeys) CHECK(setting_of(k) < 0 && !console_pinned(k));
+    CHECK(!console_menu_key("audio_output", true) && !console_menu_key("handheld_profile", true) && console_menu_key("volume", true) &&
+          !console_menu_page("Restart", true) && console_menu_page("Quit", true) && !console_menu_page("Microphone", true));
     const Setting& cap = kSettings[setting_of("frame_rate_cap")];
     CHECK(cap.n_values == 2 && cap.values[0] == -1 && cap.values[1] == 0 && cap.fallback == 0);   // (30, or the console's 60: default)
     char b[96];
@@ -303,6 +311,11 @@ def check_sources():
     pages = set(re.findall(r'\{TAB_\w+, "([^"]+)", nullptr, 0, 0, 0, nullptr,', rows))   # (and the titles: no page is one)
     own = re.findall(r'"([^"]+)"', between(logic, "kConsoleMenuOnly[] = {", "};"))
     console_pages = re.findall(r'"([^"]+)"', between(logic, "kConsoleMenuPages[] = {", "};"))
+    # (lot 86: and the microphone's, shown with HOOKSHOT_PS5_MIC=1)
+    own += re.findall(r'"([^"]+)"', between(logic, "kConsoleMicKeys[] = {", "};"))
+    console_pages += re.findall(r'"([^"]+)"', between(logic, "kConsoleMicPages[] = {", "};"))
+    if "microphone" not in own or "Test microphone" not in console_pages:
+        raise SystemExit("launcher_logic.h kConsoleMicKeys / kConsoleMicPages read as empty")
     pins = re.findall(r'\{"(\w+)", (-?\d+)\}', between(logic, "inline constexpr Pinned kConsolePinned[] = {", "};"))
     if [k for k in own if k not in keys] or [n for n in console_pages if n not in pages]:
         raise SystemExit("launcher_logic.h lists for the console's menu rows the menu does not have: %s"

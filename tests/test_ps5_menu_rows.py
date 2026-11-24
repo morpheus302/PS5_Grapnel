@@ -195,6 +195,9 @@ Motion|Invert motion Y
 Motion|Motion deadzone
 layout 1|PlayStation"""
 
+# (lot 86: with HOOKSHOT_PS5_MIC=1 the microphone's rows under Volume as well: player 1's DualSense microphone is on)
+MIC_ROWS = "Audio|Volume\nAudio|Microphone\nAudio|Microphone gain\nAudio|Test microphone"
+
 # (with HOS_OOT_CHEATS=1, our trials: the Debug tab's switch, its tools and Damage taken, as on the PC with the tools on)
 DEBUG_TOOLS = ["Debug tools", "Heart protection", "Autosave:", "Damage taken", "No-clip flight", "Mark position", "Return to mark",
                "Set time", "Inventory item", "Change quantity", "Free camera", "Teleport", "Switch age", "Inventory",
@@ -272,6 +275,15 @@ def check_sources():
     need(not re.search(r"static[^;\n]*env_on\(launcher::kConsoleMenuSwitch\)", menu),
          "the switch is kept in a static where it is first asked (a static initializer asks it before main: 77-1)")
     need('inline constexpr const char* kConsoleMenuSwitch = "HOOKSHOT_PS5_MENU_CONSOLE";' in logic, "the switch's name moved")
+    # (lot 86: the microphone's switch read there too, before console_rows works the rows out, never in a static)
+    init_switch = between(block(menu, "void menu_init() {"), "#ifdef __PROSPERO__\n    int pinned = 0;", "    if (console_menu()) {")
+    need("console_mic_on.store(env_on(launcher::kConsoleMicSwitch)" in init_switch,
+         "menu_init does not read HOOKSHOT_PS5_MIC before the console's rows are worked out")
+    need(not re.search(r"static[^;\n]*env_on\(launcher::kConsoleMicSwitch\)", menu), "the microphone's switch is kept in a static")
+    need('inline constexpr const char* kConsoleMicSwitch = "HOOKSHOT_PS5_MIC";' in logic, "the microphone switch's name moved")
+    need("launcher::console_menu_key(key, console_mic())" in block(menu, "const ConsoleRows& console_rows() {") and
+         "launcher::console_menu_page(r.name, console_mic())" in block(menu, "const ConsoleRows& console_rows() {"),
+         "console_rows does not show the microphone's rows with the switch")
     need(block(menu, "bool console_shown(int i) {").split("\n")[1].strip() == "if (!console_menu()) return true;",
          "console_shown hides rows without the switch")
     ask = block(menu, "bool restart_ask() {")
@@ -315,7 +327,7 @@ def main():
     src = fixture()
     clean = {k: v for k, v in os.environ.items()
              if k not in ("HOOKSHOT_PS5_MENU_CONSOLE", "HOOKSHOT_PS5_BACK_TO_LAUNCHER", "HOOKSHOT_PS5_LAUNCHER", "TEST_CHEATS",
-                          "TEST_STAGE4")}
+                          "TEST_STAGE4", "HOOKSHOT_PS5_MIC")}
     with tempfile.TemporaryDirectory(prefix="ps5-menu-rows-") as tmp:
         t = Path(tmp)
         (t / "rows.cpp").write_text(src, encoding="utf-8")
@@ -355,6 +367,14 @@ def main():
              "Back to the Grapnel screen shows without its switch")
         need(run("console", TEST_STAGE4="HOOKSHOT_PS5_MENU_CONSOLE=1,HOOKSHOT_PS5_BACK_TO_LAUNCHER=1,HOOKSHOT_PS5_LAUNCHER=0") ==
              CONSOLE_ROWS.replace("Gameplay|Back to the Grapnel screen\n", ""), "Back to the Grapnel screen shows with the screen off")
+        # (lot 86: HOOKSHOT_PS5_MIC=1, set at stage 4: the microphone's rows under Volume, nothing else; the PC's and the console's
+        # menu without its own switch as before)
+        mic = run("console", TEST_STAGE4="HOOKSHOT_PS5_MENU_CONSOLE=1,HOOKSHOT_PS5_BACK_TO_LAUNCHER=1,HOOKSHOT_PS5_MIC=1")
+        need(mic == CONSOLE_ROWS.replace("Audio|Volume", MIC_ROWS),
+             "the console's menu with HOOKSHOT_PS5_MIC=1 shows:\n%s\n--- not:\n%s" % (mic, CONSOLE_ROWS.replace("Audio|Volume", MIC_ROWS)))
+        need(run("console", TEST_STAGE4="HOOKSHOT_PS5_MIC=1") == pc, "HOOKSHOT_PS5_MIC=1 changes the console's menu without its switch")
+        need(run("pc", TEST_STAGE4="HOOKSHOT_PS5_MIC=1") == pc, "HOOKSHOT_PS5_MIC=1 changes the PC's menu")
+        print("the console's menu with HOOKSHOT_PS5_MIC=1: Volume, Microphone, Microphone gain, Test microphone on the Audio tab")
         # (HOS_OOT_CHEATS=1: the Debug tab's tools back, in the PC's order, the rest as without)
         cheats = run("console", TEST_STAGE4="HOOKSHOT_PS5_MENU_CONSOLE=1,HOOKSHOT_PS5_BACK_TO_LAUNCHER=1", TEST_CHEATS="1")
         debug = [l.split("|", 1)[1] for l in cheats.split("\n") if l.startswith("Debug|")]

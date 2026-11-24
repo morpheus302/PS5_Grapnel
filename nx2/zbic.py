@@ -42,8 +42,14 @@ def _run(args, data):
 
 
 def selftest():
-    """zbic_unpack --selftest: its zstd compresses and decompresses a pattern; the program's answer line"""
-    return _run(["--selftest"], b"").decode().strip()
+    """zbic_unpack --selftest: its zstd compresses and decompresses a pattern; the program's answer line. (grapnel) Then a frame
+    made here goes through the pipes both ways with every byte value in it (0x0A, 0x1A: Windows' text streams changed them)"""
+    answer = _run(["--selftest"], b"").decode().strip()
+    data = bytes(range(256)) * 4096 + b"\r\n\x1a\n" * 1000
+    frame = _run(["--compress"], data)
+    if decompress(frame) != data:
+        raise ValueError("ZBIC: a frame sent through zbic_unpack's pipes did not come back as it was")
+    return answer + "; %d bytes through the pipes" % len(data)
 
 
 def is_zbic(data):

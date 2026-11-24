@@ -783,6 +783,13 @@ inline constexpr const char* kConsoleMenuOnly[] = {
 /// Layout preset is on the Controls tab instead), nor the PC's tools (Bug report, Save my pipeline list, Set up for a weak
 /// laptop...)
 inline constexpr const char* kConsoleMenuPages[] = {"Motion", "Quit", "Back to the Grapnel screen"};
+/// (lot 86) The microphone's rows, on the Audio tab under Volume: what the ocarina hears when the game's microphone option is on,
+/// player 1's DualSense microphone (host/posix/ps5_mic.h). Shown with HOOKSHOT_PS5_MIC=1 only, the switch that turns the
+/// console's microphone on: without it the game hears silence and the rows would offer nothing. By their key (Microphone,
+/// Microphone gain) and their name (Test microphone, no value)
+inline constexpr const char* kConsoleMicSwitch = "HOOKSHOT_PS5_MIC";
+inline constexpr const char* kConsoleMicKeys[] = {"microphone", "microphone_gain"};
+inline constexpr const char* kConsoleMicPages[] = {"Test microphone"};
 /// The console's values of the rows its menu hides that change the game, as the console has played (its options file of
 /// 22/11, build/lot71/console-apres-71-A/hookshot_options.ini). Not output_res (a size, which the host does not read with the
 /// handheld profile) nor ultrawide (one 16:9 TV): vk_menu.cpp save writes them back as read. The debug tools (debug_tools) come
@@ -805,13 +812,15 @@ inline bool listed(const char* const* list, size_t n, const char* s) {
         if (!strcmp(list[i], s)) return true;
     return false;
 }
-/// Whether the console's menu shows the row of this key (a row with a value)
-inline bool console_menu_key(const char* key) {
-    return setting_of(key) >= 0 || listed(kConsoleMenuOnly, sizeof kConsoleMenuOnly / sizeof *kConsoleMenuOnly, key);
+/// Whether the console's menu shows the row of this key (a row with a value); mic: HOOKSHOT_PS5_MIC=1, the microphone's rows too
+inline bool console_menu_key(const char* key, bool mic = false) {
+    return setting_of(key) >= 0 || listed(kConsoleMenuOnly, sizeof kConsoleMenuOnly / sizeof *kConsoleMenuOnly, key) ||
+           (mic && listed(kConsoleMicKeys, sizeof kConsoleMicKeys / sizeof *kConsoleMicKeys, key));
 }
 /// Whether it shows the row of this name (a row with no value: a page or an action)
-inline bool console_menu_page(const char* name) {
-    return listed(kConsoleMenuPages, sizeof kConsoleMenuPages / sizeof *kConsoleMenuPages, name);
+inline bool console_menu_page(const char* name, bool mic = false) {
+    return listed(kConsoleMenuPages, sizeof kConsoleMenuPages / sizeof *kConsoleMenuPages, name) ||
+           (mic && listed(kConsoleMicPages, sizeof kConsoleMicPages / sizeof *kConsoleMicPages, name));
 }
 /// The console's value of the row of this key, when its menu hides it and it is put back: nullptr otherwise
 inline const Pinned* console_pinned(const char* key) {

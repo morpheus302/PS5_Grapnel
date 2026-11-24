@@ -970,6 +970,13 @@ const char* tx_mic(int v) {
 /// The Microphone row: Off, the default, a microphone of the list, or the chosen one while it is unplugged (variant 1)
 const char* hn_mic(int v, int variant) {
     if (v <= 0) return variant <= 0 ? "The game hears silence." : nullptr;
+#ifdef __PROSPERO__
+    // (lot 86: on the console the default is player 1's microphone, host/posix/ps5_mic.h, as the console's sound settings route it)
+    if (v == 1)
+        return variant <= 0 ? "Player 1's microphone, as the console's sound settings choose it: the DualSense's own, or a headset "
+                              "plugged into it."
+                            : nullptr;
+#endif
     if (v == 1)
         return variant <= 0 ? "The system's default recording device. On Windows, desktop apps must be allowed to use the "
                               "microphone (Settings, Privacy & security)."
@@ -2115,6 +2122,10 @@ void quit_title() {
 // already asks the rows. Read there, it was off for the whole run (essai 77-1: the PC's menu). Off until menu_init
 std::atomic<bool> console_menu_on{false};
 bool console_menu() { return console_menu_on.load(std::memory_order_relaxed); }
+// (lot 86) HOOKSHOT_PS5_MIC=1: player 1's DualSense microphone is on (host/posix/ps5_mic.h), and the console's menu shows the
+// microphone's rows (launcher_logic.h kConsoleMicKeys, kConsoleMicPages). Read by menu_init with its switch, as it, off until then
+std::atomic<bool> console_mic_on{false};
+bool console_mic() { return console_mic_on.load(std::memory_order_relaxed); }
 /// Each row's place in the console's menu, from launcher_logic.h's lists by its key (ini_key) or its name: console_rows, below
 /// ini_key
 struct ConsoleRows {
@@ -2280,7 +2291,8 @@ const ConsoleRows& console_rows() {
             const Row& r = rows[i];
             const char* key = r.value ? ini_key(r) : nullptr;
             t.setting[i] = (signed char)(key ? launcher::setting_of(key) : -1);
-            t.listed[i] = key ? launcher::console_menu_key(key) : !r.heading && launcher::console_menu_page(r.name);
+            t.listed[i] = key ? launcher::console_menu_key(key, console_mic())
+                              : !r.heading && launcher::console_menu_page(r.name, console_mic());
         }
     });
     return t;
@@ -5413,13 +5425,15 @@ void menu_init() {
 #ifdef __PROSPERO__
     int pinned = 0;   // (lot 74: the console's values put back, before the switches of the run go over them below)
     console_menu_on.store(env_on(launcher::kConsoleMenuSwitch), std::memory_order_relaxed);   // (lot 77b: hookshot_env.txt's now)
+    console_mic_on.store(env_on(launcher::kConsoleMicSwitch), std::memory_order_relaxed);     // (lot 86: before console_rows)
     if (console_menu()) {
         console_rows();   // (worked out here, before another thread asks)
         pinned = console_pin();
         first_start = false;   // (no Auto (this PC) on the console, even without an options file: its values are those)
         logf("menu: ps5: the in-game menu is the console's (HOOKSHOT_PS5_MENU_CONSOLE=1): the launch screen's %d settings and %d "
-             "rows of its own; the rows it hides that change the game at the console's values (%d put back)",
-             launcher::kSettingCount - 1, (int)std::size(launcher::kConsoleMenuOnly), pinned);
+             "rows of its own%s; the rows it hides that change the game at the console's values (%d put back)",
+             launcher::kSettingCount - 1, (int)std::size(launcher::kConsoleMenuOnly),
+             console_mic() ? ", and the microphone's (HOOKSHOT_PS5_MIC=1)" : "", pinned);
     }
 #endif
     menu_debug_rows(opts.descriptor_reuse, opts.sampler_cache);   // (the Debug rows that apply in play: what was loaded)

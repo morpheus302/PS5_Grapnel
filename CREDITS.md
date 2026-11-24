@@ -20,8 +20,9 @@ Grapnel is a small layer on a great deal of other people's work. Thank you all.
   this to run on: [PS5_Mesa](https://github.com/mihawk-99/PS5_Mesa) (RADV on the PS5), [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan)
   (the link, the native tool, `libc.prx`), [PS5_PayloadSDK](https://github.com/mihawk-99/PS5_PayloadSDK) (the platform
   layer), [PS5_VulkanTemplate](https://github.com/mihawk-99/PS5_VulkanTemplate) and [PS5_MihawkGen](https://github.com/mihawk-99/PS5_MihawkGen)
-  (the frame generator, in `third_party/mihawkgen/`). His PS5_Hookshot was the model for the frame generator's wiring, and
-  his TSC clock (`host/posix/tsc_clock.h`) came by way of heydemoura's PS5_Longshot.
+  (the frame generator, in `third_party/mihawkgen/`). His PS5_Hookshot was the model for the frame generator's wiring,
+  his TSC clock (`host/posix/tsc_clock.h`) came by way of heydemoura's PS5_Longshot, and the ocarina hears player 1's
+  DualSense microphone after his [PS5_RetroArch](https://github.com/mihawk-99/PS5_RetroArch)'s (`host/posix/ps5_mic.h`).
 - **[ps5-payload-dev](https://github.com/ps5-payload-dev)**: the payload SDK (v0.42) PS5_PayloadSDK is built on, and the
   ELF loader the title sends its storage broker to.
 - **BlackBearReloaded**: ps5-native-app-boilerplate, after which PS5_Vulkan generates `libc.prx`.
@@ -30,6 +31,8 @@ Grapnel is a small layer on a great deal of other people's work. Thank you all.
   in-place readback parts Grapnel uses (`RX_VK_READBACK_IN_PLACE_PART`).
 - **[bizkut](https://github.com/bizkut)**: Forever Launcher's write broker (ps5-forever), which Grapnel's storage broker is
   adapted from, and Savage Wind, which showed that a recompiled game could run on a jailbroken PS5.
+- **[mateo-cogeanu/ProsperoCraft](https://github.com/mateo-cogeanu/ProsperoCraft)**: its notes on the console's microphone
+  service, which showed that the port is best made early and kept.
 - **[drakmor/ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus)**, **kstuff** and **elfldr**: the console-side
   tools Grapnel needs, each by its own authors.
 

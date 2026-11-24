@@ -26,6 +26,12 @@ Each switch is unset by default and then changes nothing; none changes a compile
 patch starts with its commit message (what and why); the author lines are left out on purpose, and the patches carry no
 other change.
 
+## The shaders' preparation on the PC
+
+The toolchain's `prepare/` runs this driver built for the player's PC on the PS5 winsys's host model, so that the shader
+cache it fills is the console's: for Linux from this folder's seven patches, for Windows with the four of
+[`windows/`](windows/README.md) on top; both by `scripts/grapnel-builder/make_prepare_driver.sh` (the recipe and why).
+
 ## Apply
 
 ```bash

@@ -70,11 +70,137 @@ TOOLS = {"clang": "prospero-clang", "clang++": "prospero-clang++", "ar": "prospe
          "ranlib": "prospero-ranlib", "lld": "prospero-lld", "nm": "llvm-nm", "llvm-nm": "llvm-nm"}
 
 
+# ---- (grapnel) the console toolchain without a shell: Windows, and the same path on Linux ----------------------------------
+# The payload SDK's prospero-* wrappers, PS5_Vulkan's tooling/prospero-clang18 and tools/radv-link.sh are bash and sh scripts,
+# which a player's Windows has not. With PS5_RECIPE (a Grapnel toolchain folder's ps5_recipe.json) and PS5_LLVM_BIN (LLVM
+# 19.1.7's bin folder), the LLVM tools are run directly, with the very arguments those scripts give them: the recipe recorded
+# them once, on Linux, by running the scripts themselves (scripts/grapnel-builder/make_toolchain.py, record_recipe). Its paths
+# are written {sdk}, {vk}, {radv}, {builtins}, {toolchain}, filled in here. Without PS5_RECIPE nothing changes: the wrappers.
+DIRECT_TOOLS = {"clang": "clang", "clang++": "clang++", "ar": "llvm-ar", "llvm-ar": "llvm-ar", "ranlib": "llvm-ranlib",
+                "lld": "ld.lld", "nm": "llvm-nm", "llvm-nm": "llvm-nm"}
+_RECIPE = {}
+
+
+def direct():
+    """The toolchain's recipe drives the LLVM tools directly (PS5_RECIPE): no bash"""
+    return bool(os.environ.get("PS5_RECIPE"))
+
+
+def recipe():
+    """PS5_RECIPE's recipe, its placeholders filled in with this PC's paths (once per process)"""
+    import json
+    path = os.path.abspath(os.environ["PS5_RECIPE"])
+    if path not in _RECIPE:
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+        if raw.get("format") != 1:
+            raise SystemExit("PS5_RECIPE: %s is not a recipe this build reads (format %r)" % (path, raw.get("format")))
+        top = os.path.dirname(path)
+        _RECIPE[path] = fill_places(raw, {"toolchain": top, "sdk": os.path.join(top, "sdk"), "vk": os.path.join(top, "ps5_vulkan"),
+                                          "radv": os.path.join(top, *raw["radv"].split("/")),
+                                          "builtins": os.path.join(top, *raw["builtins"].split("/"))})
+    return _RECIPE[path]
+
+
+def fill_places(v, places):
+    """The recipe's {name} placeholders filled in, in strings, lists and dicts; the "/" after a placeholder made this system's
+    separator. A placeholder not in places stays as it is ({map}: link_title's own)"""
+    import re
+    if isinstance(v, str):
+        return re.sub(r"\{(\w+)\}(\S*)", lambda m: places[m.group(1)] + m.group(2).replace("/", os.sep) if m.group(1) in places
+                      else m.group(0), v)
+    if isinstance(v, list):
+        return [fill_places(x, places) for x in v]
+    if isinstance(v, dict):
+        return {k: fill_places(x, places) for k, x in v.items()}
+    return v
+
+
+def _exe(name):
+    return name + (".exe" if os.name == "nt" else "")
+
+
+def llvm_bin():
+    b = os.environ.get("PS5_LLVM_BIN") or os.path.dirname(os.environ.get("PS5_CLANG") or "")
+    if not b:
+        raise SystemExit("PS5_RECIPE: PS5_LLVM_BIN (LLVM 19.1.7's bin folder) is not set")
+    return b
+
+
 def find(tool):
+    if direct():
+        # (clang++ needs no file of its own: command() runs clang in its C++ mode; Windows' LLVM has the one clang.exe here)
+        path = os.path.join(llvm_bin(), _exe(DIRECT_TOOLS.get(tool, tool)))
+        if tool != "clang++" and not os.path.isfile(path):
+            raise SystemExit("RX_TARGET=ps5: %s not found in LLVM's bin folder (%s)" % (os.path.basename(path), llvm_bin()))
+        return path
     path = os.path.join(sdk(), "bin", TOOLS.get(tool, tool))
     if not os.path.isfile(path):
         raise SystemExit("RX_TARGET=ps5: %s not found in the payload SDK (%s)" % (TOOLS.get(tool, tool), sdk()))
     return path
+
+
+def _tool_name(path):
+    n = os.path.basename(path).lower()
+    return n[:-4] if n.endswith(".exe") else n
+
+
+def command(tool, args):
+    """The command that runs a tool find() gave on args: [tool] + args with the SDK's wrappers; in direct mode, the LLVM tool with
+    the arguments the wrapper would have put around args (the recipe's). Direct clang compiles only (-c, -E, -S, -###): a link
+    goes through lld (link_title), never through the compiler's driver, which would look for the wrapper prospero-lld"""
+    args = list(args)
+    if not direct():
+        return [tool] + args
+    name, r = _tool_name(tool), recipe()
+    if name in ("clang", "clang++"):
+        if not any(a in ("-c", "-E", "-S", "-###") for a in args):
+            raise RuntimeError("direct toolchain: %s links nothing (%s): link with lld" % (name, " ".join(args[-4:])))
+        w = r["compile"]["c++" if name == "clang++" else "c"]
+        clang = os.path.join(llvm_bin(), _exe("clang"))
+        return [clang] + forward_slashes((["--driver-mode=g++"] if name == "clang++" else []) + w["before"] + args + w["after"])
+    if name == "ld.lld":
+        # (prospero-lld: -pie unless --shared, -r or --static; the SDK's linker script unless the command gives one. The recipe
+        # has the wrapper's arguments for each case the build uses)
+        pie = not any(a in ("--shared", "-r", "--static") for a in args)
+        script = not any(a in ("--script", "-T") for a in args)
+        case = ("pie" if pie else "nopie") + ("+script" if script else "")
+        w = r["lld"].get(case)
+        if w is None:
+            raise RuntimeError("direct toolchain: the recipe has no prospero-lld case %s" % case)
+        if os.name == "nt" and not any(a.startswith("--threads") for a in args):
+            args = ["--threads=1"] + args   # (Windows: link_threads())
+        return [tool] + w["before"] + args + w["after"]
+    return [tool] + args   # (llvm-ar, llvm-nm: the wrappers run them as they are)
+
+
+def link_threads():
+    """lld's threads: HOOKSHOT_PS5_LINK_THREADS, else 3 (it takes every core otherwise; the build's job count is the machine's
+    share). (grapnel) Windows: 1. Under Wine the Windows builder's ld.lld (WinLibs', on winpthreads) hung for good 10 links of
+    10 with its threads, and none of 10 with one (23/11/2026); a real Windows was not tried. The output is the same whatever the
+    count; one thread costs the eboot's link about a minute"""
+    raw = os.environ.get("HOOKSHOT_PS5_LINK_THREADS")
+    return max(1, int(raw)) if raw else (1 if os.name == "nt" else 3)
+
+
+def crt_command(args):
+    """PS5_Vulkan's tooling/prospero-clang18 (the CRT and the AGC link stubs): the host's clang with the repository's target flags"""
+    if not direct():
+        return ["sh", os.path.join(vulkan(), "tooling", "prospero-clang18")] + list(args)
+    return [os.path.join(llvm_bin(), _exe("clang"))] + forward_slashes(recipe()["crt"]["before"] + list(args))
+
+
+def forward_slashes(args):
+    """(Windows) a compile's paths written with "/", as on Linux: __FILE__ is the path clang was given (the source file's, a
+    header's search folder's), -ffile-prefix-map takes the checkout's folder off its front, and for a PS5 target clang then
+    normalises it the POSIX way only: "C:\\x\\nx2\\..\\gpu\\a.cpp" stayed ".\\nx2\\..\\gpu\\a.cpp" where Linux wrote
+    "nx2/../gpu/a.cpp", and the eboot's assertion strings differed. Between a folder and a header clang puts its own preferred
+    separator: "/" in a MinGW-built LLVM, which the Windows builder ships (WinLibs', built with GCC and libstdc++ as Linux's
+    clang is: scripts/grapnel-builder/make_windows_package.py), so the strings come out the same as Linux's. Macro definitions
+    (-D, -U) are left as they are"""
+    if os.sep != "\\":
+        return list(args)
+    return [a if a.startswith(("-D", "-U")) else a.replace("\\", "/") for a in args]
 
 
 def target():
@@ -201,6 +327,13 @@ def param_json(title_id=TITLE_ID, name=TITLE_NAME, label=CONTENT_LABEL):
         indent=2, sort_keys=True) + "\n"
 
 
+def write_param_json(path):
+    """sce_sys/param.json, its lines ending in LF on every system: Windows' Python wrote CRLF (0.2-test2: 944 bytes for Linux's
+    903), a file the console reads"""
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(param_json())
+
+
 def _run(cmd, log, **kw):
     log.write("$ " + " ".join(cmd) + "\n")
     log.flush()
@@ -225,6 +358,17 @@ def _recipe(vk, s, archive, env):
         elif item:
             cur.append(item)
     return parts   # linker script, flags, inputs
+
+
+def _recipe_data(work):
+    """(grapnel) radv-link.sh's three arrays as the toolchain's recipe recorded them; the version script it writes (the names it
+    binds, kept local) written into this link's folder instead of the toolchain's"""
+    link = recipe()["link"]
+    mapfile = os.path.join(work, "radv-platform-local.map")
+    with open(mapfile, "w", encoding="utf-8", newline="\n") as f:
+        f.write(link["map"])
+    places = {"map": mapfile}
+    return fill_places(link["script"], places), fill_places(link["flags"], places), fill_places(link["inputs"], places)
 
 
 LINKER_DEFINED = ("__preinit_array_", "__init_array_", "__fini_array_", "__start_", "__stop_", "__ehdr_start",
@@ -279,7 +423,8 @@ def dirty_script(work, script):
     i = script.index("-T")
     base = os.path.abspath(script[i + 1])
     ld = os.path.join(work, "hookshot-ps5.ld")
-    with open(ld, "w") as f:
+    # ((grapnel) UTF-8, which lld reads: Windows' code page wrote "Prénom" in the INCLUDE below as lld could not find it)
+    with open(ld, "w", encoding="utf-8") as f:
         f.write("/* nx2/toolchain_ps5.py dirty_script: PS5_Vulkan's layout, a64-kit's write-watch table out of the image's .bss\n"
                 "   (backed with direct memory at start by host/posix/ps5_early.c) */\n"
                 "SECTIONS { /DISCARD/ : { *(.bss.a64_dirty) } }\n"
@@ -343,7 +488,8 @@ def link_title(d, kind, app, log_path=None):
     """(ps5) The eboot's link and its title folder, PS5_VulkanTemplate's ps5/tools/link-title.sh's steps (the GPU smoke
     title's, scripts/ps5/build-smoke.sh, run on the console) with this build's archives in <d>:
 
-    1. the CRT (PS5_Vulkan tooling/native/app_crt.cpp) and the AGC import stubs (no SDK stub has them);
+    1. the CRT (PS5_Vulkan tooling/native/app_crt.cpp), the AGC import stubs and ours of libSceAudioIn (ps5/stubs/: lot 86's
+       microphone) (no SDK stub has them);
     2. tools/radv-link.sh's recipe: RADV whole, libc++/libc++abi/libunwind, clang's builtins, the platform layer; the heap
        and thread wraps, the libc names the console lacks bound to ps5_*;
     3. prospero-lld: the CRT; kind "game": libhookshot_game.a whole (the lifted functions are reached through a64_table's
@@ -371,10 +517,11 @@ def link_title(d, kind, app, log_path=None):
     work = os.path.join(d, "link-" + kind)
     os.makedirs(os.path.join(work, "obj"), exist_ok=True)
     os.makedirs(os.path.join(work, "stubs"), exist_ok=True)
-    tool = os.path.join(vk or "", "build", "host", "ps5-native-tool")
+    tool = os.path.join(vk or "", "build", "host", _exe("ps5-native-tool"))
     native = os.path.join(vk or "", "tooling", "native")
     lld = find("lld")
-    need = [archive, tool, lld, os.path.join(vk or "", "tools", "radv-link.sh"), os.path.join(vk or "", "runtime", "libc.prx")]
+    need = [archive, tool, lld, os.environ["PS5_RECIPE"] if direct() else os.path.join(vk or "", "tools", "radv-link.sh"),
+            os.path.join(vk or "", "runtime", "libc.prx")]
     libs = {n: os.path.join(d, n) for n in ("libhookshot_host.a", "libhookshot_rt.a", "libhookshot_vk.a", "libhookshot_eden.a",
                                              "libhookshot_sirit.a", "libopus.a",
                                              "libhookshot_game.a" if kind == "game" else "libhookshot_boot.a")}
@@ -382,23 +529,27 @@ def link_title(d, kind, app, log_path=None):
     if missing:
         print("ps5: the eboot's link: missing " + ", ".join(missing), flush=True)
         return False
-    env = dict(os.environ, PS5_PAYLOAD_SDK=s, PS5_CLANG=host_clang())
+    env = dict(os.environ, PS5_PAYLOAD_SDK=s, PS5_CLANG=os.path.join(llvm_bin(), _exe("clang")) if direct() else host_clang())
     log_path = log_path or os.path.join(work, "link.log")
-    with open(log_path, "w") as log:
+    with open(log_path, "w", encoding="utf-8") as log:
         try:
-            cc = ["sh", os.path.join(vk, "tooling", "prospero-clang18")]
             crt = os.path.join(work, "obj", "app_crt.o")
-            _run(cc + ["-std=c++20", "-O2", "-fno-exceptions", "-fno-rtti", "-c", os.path.join(native, "app_crt.cpp"),
-                       "-o", crt], log, env=env)
+            _run(crt_command(["-std=c++20", "-O2", "-fno-exceptions", "-fno-rtti", "-c", os.path.join(native, "app_crt.cpp"),
+                              "-o", crt]), log, env=env)
             stubs = []
-            for library, src in (("libSceAgc", "vendor/ps5/sdk/stubs/agc_canary_link_stub.c"),
-                                 ("libSceAgcDriver", "vendor/ps5/sdk/stubs/agc_driver_canary_link_stub.c")):
+            # (lot 86: and libSceAudioIn, player 1's DualSense microphone (host/posix/ps5_mic.h): the SDK has no stub of it, ours
+            # is in ps5/stubs/, as PS5_RetroArch links it)
+            for library, src in (("libSceAgc", os.path.join(vk, "vendor/ps5/sdk/stubs/agc_canary_link_stub.c")),
+                                 ("libSceAgcDriver", os.path.join(vk, "vendor/ps5/sdk/stubs/agc_driver_canary_link_stub.c")),
+                                 ("libSceAudioIn", os.path.join(ROOT, "ps5", "stubs", "libSceAudioIn_link_stub.c"))):
                 o = os.path.join(work, "obj", library + "_stub.o")
                 so = os.path.join(work, "stubs", library + ".so")
-                _run(cc + ["-std=c11", "-O2", "-fPIC", "-c", os.path.join(vk, src), "-o", o], log, env=env)
-                _run([lld, "--shared", "-soname", library + ".prx", "-o", so, o], log, env=env)
+                # (both sides kept: the Windows work's crt_command and command(lld) (the recipe's arguments, no bash), lot 86's
+                # sources named whole, its own stub beside the SDK's two)
+                _run(crt_command(["-std=c11", "-O2", "-fPIC", "-c", src, "-o", o]), log, env=env)
+                _run(command(lld, ["--shared", "-soname", library + ".prx", "-o", so, o]), log, env=env)
                 stubs.append(so)
-            script, flags, inputs = _recipe(vk, s, archive, env)
+            script, flags, inputs = _recipe_data(work) if direct() else _recipe(vk, s, archive, env)
             script = dirty_script(work, script)   # (a64_dirty out of .bss: host/posix/ps5_early.c backs it)
             sos = sorted(os.path.join(s, "target", "lib", f) for f in os.listdir(os.path.join(s, "target", "lib"))
                          if f.endswith(".so"))
@@ -413,7 +564,7 @@ def link_title(d, kind, app, log_path=None):
             # (2026-11-15, host/posix/ps5_compile_heap.c: the driver's compiles in arenas of their own. The heap's allocations
             # (ps5_heap_*, not dlmalloc's mspace_malloc, which its own memalign and realloc call), its segments' map and unmap,
             # RADV's two entry points that compile, and the three calls that make what a compile keeps)
-            cmd = ([lld, "--threads=%d" % max(1, int(os.environ.get("HOOKSHOT_PS5_LINK_THREADS") or 3))] + script +
+            cmd = command(lld, ["--threads=%d" % link_threads()] + script +
                    ["--eh-frame-hdr"] + flags + ["--wrap=fopen", "--wrap=fwrite", "--wrap=ps5p_heap_map",
                                                  "--wrap=sceKernelAllocateDirectMemory", "--wrap=sceKernelReleaseDirectMemory",
                                                  "--wrap=sceKernelMapDirectMemory", "--wrap=create_mspace"] +
@@ -428,7 +579,7 @@ def link_title(d, kind, app, log_path=None):
                     libs["libhookshot_eden.a"], libs["libhookshot_sirit.a"], libs["libopus.a"]] +
                    ([dav1d()[1]] if dav1d() else []) +
                    stubs + inputs + ["--as-needed"] + sos)
-            with open(os.path.join(work, "link-command.txt"), "w") as f:
+            with open(os.path.join(work, "link-command.txt"), "w", encoding="utf-8") as f:
                 f.write(" ".join(cmd) + "\n")
             t = __import__("time").time()
             _run(cmd, log, env=env)
@@ -440,7 +591,7 @@ def link_title(d, kind, app, log_path=None):
                     any(l.split()[-1] == "localeconv" for l in _nm(elf, "--undefined-only") if l.strip()):
                 raise RuntimeError("localeconv is not bound to the platform layer's ps5_localeconv")
             rows = surface_elf(elf, stubs)
-            with open(os.path.join(work, "surface.txt"), "w") as f:
+            with open(os.path.join(work, "surface.txt"), "w", encoding="utf-8") as f:
                 for n, (k, where) in sorted(rows.items()):
                     f.write("%-8s %-48s %s\n" % (k, n, where))
             counts = {}
@@ -469,8 +620,7 @@ def link_title(d, kind, app, log_path=None):
             _run([tool, "self", "--sign", "--in", eboot_elf, "--out", os.path.join(app, "eboot.bin"), "--magic", "0x1D3D154F"],
                  log, env=env)
             _run([tool, "self", "--inspect", "--file", os.path.join(app, "eboot.bin")], log, env=env)
-            with open(os.path.join(app, "sce_sys", "param.json"), "w") as f:
-                f.write(param_json())
+            write_param_json(os.path.join(app, "sce_sys", "param.json"))
             prx = os.path.join(vk, "runtime", "libc.prx")
             want = open(prx + ".sha256").read().split()[0]
             if hashlib.sha256(open(prx, "rb").read()).hexdigest() != want:
@@ -489,11 +639,17 @@ def link_title(d, kind, app, log_path=None):
             if os.path.exists(broker):
                 # (grapnel) the same file on every PC: no compiler name written (-fno-ident), the checkout's folder as ".",
                 # and the .comment section the SDK's start files and the linker still fill ("Linker: Debian LLD 19.1.7",
-                # "Ubuntu clang ...") taken out; its code was already the same from one PC to another
+                # "Ubuntu clang ...") taken out; its code was already the same from one PC to another. Without bash (direct
+                # mode) it is compiled, then linked by lld with what clang's driver gave prospero-lld: the recipe's
+                broker_flags = ["-O2", "-Wall", "-Wextra", "-Werror", "-pthread", "-fno-ident", "-ffile-prefix-map=%s=." % ROOT,
+                                "-I" + os.path.join(ROOT, "host", "posix")]
                 elf = os.path.join(app, "hookshot-broker.elf")
-                _run([find("clang"), "-O2", "-Wall", "-Wextra", "-Werror", "-pthread", "-fno-ident",
-                      "-ffile-prefix-map=%s=." % ROOT, "-I" + os.path.join(ROOT, "host", "posix"), "-o", elf, broker],
-                     log, env=env)
+                if direct():
+                    bo = os.path.join(work, "obj", "hookshot-broker.o")
+                    _run(command(find("clang"), broker_flags + ["-c", broker, "-o", bo]), log, env=env)
+                    _run(command(lld, fill_places(recipe()["broker_link"], {"obj": bo, "out": elf})), log, env=env)
+                else:
+                    _run([find("clang")] + broker_flags + ["-o", elf, broker], log, env=env)
                 _run([find("llvm-objcopy"), "--remove-section=.comment", elf], log, env=env)
         except RuntimeError as e:
             print("ps5: the eboot's link (%s) failed: %s (%s)" % (kind, e, log_path), flush=True)

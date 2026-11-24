@@ -32,6 +32,17 @@ linked into the eboot, which is a change to test on the console first.
 | LLVM / clang, lld, llvm-ar | 19.1.7 | The compiler every console test used (`x86_64-sie-ps5`, through the SDK's `prospero-*` wrappers); another version gives another eboot | Apache-2.0 WITH LLVM-exception |
 | Python | 3.12 or newer | The translator (`nx2/`) and the builder; packages in `requirements.txt` | PSF |
 
+## The Windows builder and the shaders' preparation (Grapnel 0.2)
+
+| Dependency | Revision | Role | Licence |
+|---|---|---|---|
+| [PS5_Mesa](https://github.com/mihawk-99/PS5_Mesa) | `0f86253f674c425052948eb3cb116c81e646a734` with `ps5/mesa-patches/` (and `ps5/mesa-patches/windows/` for Windows) | The shaders' preparation's driver, built for the PC by `scripts/grapnel-builder/make_prepare_driver.sh` | MIT |
+| [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) | `20250114` (clang 19.1.7), its release for Linux | Builds the Windows parts on Linux: the preparation's driver, host and renderer, `ps5-native-tool.exe`, `Grapnel.exe`, the static LLVM | Apache-2.0 WITH LLVM-exception; MinGW-w64's |
+| [LLVM](https://github.com/llvm/llvm-project) | `llvmorg-19.1.7` (`llvm-project-19.1.7.src.tar.xz`, sha256 `82401fea7b79d0078043f7598b835284d6650a75b93e64b6f761ea7b63097501`) | The Windows package's clang, lld and binutils, built static by `scripts/grapnel-builder/make_windows_llvm.sh` | Apache-2.0 WITH LLVM-exception |
+| [WinLibs](https://github.com/brechtsanders/winlibs_mingw) | `14.2.0posix-19.1.7-12.0.0-msvcrt-r3` (sha256 pinned in `make_windows_package.py`) | The GCC 14.2 runtime that LLVM is built against for Windows (libstdc++, MSVCRT, winpthreads, linked in): its code is Linux's | GPL-3.0 with the GCC Runtime Library Exception; MinGW-w64's |
+| [ftpsrv](https://github.com/ps5-payload-dev/ftpsrv) | `92072f2694fdd804718cebfe0cc49fe7fe4aab82` | The FTP server the builder's step 6 sends to the console's ELF loader when none answers; compiled from source into the toolchain's `ftpsrv/` by `make_toolchain.py --ftpsrv-source` | GPL-3.0-or-later |
+| [python-build-standalone](https://github.com/astral-sh/python-build-standalone) | CPython 3.13.18 (pinned in `make_windows_package.py`) | The Windows package's Python, with Tkinter | PSF and its parts' |
+
 ## On the console (named, not provided)
 
 Each has its own authors and licence; this repository does not explain how to jailbreak a console.

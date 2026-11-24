@@ -104,6 +104,12 @@ HOOKSHOT_PS5_BACK_TO_LAUNCHER=1
 # the in-game menu shows the console's settings only
 HOOKSHOT_PS5_MENU_CONSOLE=1
 
+# ---- the microphone ----
+# the ocarina can be played into player 1's DualSense microphone (lot 86): the game's own microphone option must be on too, and
+# nothing is heard while the game does not listen. The voice never leaves the console: nothing is sent or recorded. The
+# controller's mute button cuts it. Tried on firmware 12.60; HOOKSHOT_PS5_MIC=0 turns it off.
+HOOKSHOT_PS5_MIC=1
+
 # ---- the shaders ----
 # the builder prepares the game's shaders on the PC (its step 7): the console's driver finds them in its cache, the title folder's
 # radv-shader-cache, and the launch screen only checks it. HOOKSHOT_PS5_PREPARE=1 would let the console prepare them itself from

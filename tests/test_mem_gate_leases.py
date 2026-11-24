@@ -27,7 +27,7 @@ def actual_build(source):
     nodes[:0] = [node for node in tree.body if isinstance(node, ast.Assign)
                  and any(isinstance(t, ast.Name) and t.id in constants for t in node.targets)]
     assert len(nodes) == len(names) + len(constants)
-    scope = dict(os=os, math=math, threading=threading, time=time, COMPILER_MB=1500,
+    scope = dict(os=os, math=math, threading=threading, time=time, COMPILER_MB=1500, PS5=False,
                  free_mb=lambda: 1000000, rss_mb=lambda process: 0)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), scope)
     return scope

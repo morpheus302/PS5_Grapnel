@@ -62,13 +62,29 @@ bool load_global() {
     // (PS5) no loader to open: a title cannot load a module (dlopen is refused), so the driver is the title's own
     get_instance_proc = vk_icdGetInstanceProcAddr;
 #else
-#ifdef _WIN32   // (longshot: the loader from System32 only, not from the current folder or PATH)
-    HMODULE m = LoadLibraryExA("vulkan-1.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-#else
-    HMODULE m = LoadLibraryA("vulkan-1.dll");   // (linux: libvulkan.so.1, host/posix/win32_posix.c)
+#if defined(_WIN32) && defined(HOOKSHOT_CACHE_BUILD)
+    // (grapnel, Windows: the shader preparation's own driver, GRAPNEL_VK_ICD, opened as the console's title has it, without a
+    // loader: neither the PC's GPU drivers nor the layers installed on it come into the preparation)
+    if (const char* icd = getenv("GRAPNEL_VK_ICD"); icd && *icd) {
+        HMODULE d = LoadLibraryA(icd);
+        if (!d) return false;
+        typedef VkResult (VKAPI_PTR* Negotiate)(uint32_t*);
+        if (Negotiate negotiate = (Negotiate)(void*)GetProcAddress(d, "vk_icdNegotiateLoaderICDInterfaceVersion")) {
+            uint32_t version = 5;
+            negotiate(&version);
+        }
+        get_instance_proc = (PFN_vkGetInstanceProcAddr)(void*)GetProcAddress(d, "vk_icdGetInstanceProcAddr");
+    } else
 #endif
-    if (!m) return false;
-    get_instance_proc = (PFN_vkGetInstanceProcAddr)(void*)GetProcAddress(m, "vkGetInstanceProcAddr");
+    {
+#ifdef _WIN32   // (longshot: the loader from System32 only, not from the current folder or PATH)
+        HMODULE m = LoadLibraryExA("vulkan-1.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+#else
+        HMODULE m = LoadLibraryA("vulkan-1.dll");   // (linux: libvulkan.so.1, host/posix/win32_posix.c)
+#endif
+        if (!m) return false;
+        get_instance_proc = (PFN_vkGetInstanceProcAddr)(void*)GetProcAddress(m, "vkGetInstanceProcAddr");
+    }
 #endif
     if (!get_instance_proc) return false;
 #define VKX_LOAD(f) f = (PFN_##f)get_instance_proc(nullptr, #f);
@@ -170,7 +186,19 @@ bool create_instance() {
         logf("vk: the Vulkan loader is %u.%u: 1.3 is needed", VK_VERSION_MAJOR(version), VK_VERSION_MINOR(version));
         return false;
     }
-#ifdef _WIN32
+#if defined(_WIN32) && defined(HOOKSHOT_CACHE_BUILD)
+    // (grapnel, Windows: the shader preparation's driver, the console's on its PC model, has no window system, as Linux's has
+    // none: the surface extensions it has, as on Linux, so that the instance is made the same)
+    const char* exts[2] = {VK_KHR_SURFACE_EXTENSION_NAME};
+    uint32_t n_exts = 1;
+    {
+        uint32_t n = 0;
+        vkEnumerateInstanceExtensionProperties(nullptr, &n, nullptr);
+        std::vector<VkExtensionProperties> all(n);
+        vkEnumerateInstanceExtensionProperties(nullptr, &n, all.data());
+        if (has_extension(all, VK_KHR_WIN32_SURFACE_EXTENSION_NAME)) exts[n_exts++] = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
+    }
+#elif defined(_WIN32)
     const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
     const uint32_t n_exts = 2;
 #elif defined(__PROSPERO__)

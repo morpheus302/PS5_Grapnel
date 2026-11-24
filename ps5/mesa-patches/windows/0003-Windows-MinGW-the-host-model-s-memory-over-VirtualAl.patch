@@ -1,0 +1,524 @@
+Subject: [PATCH 3/4] Windows (MinGW): the host model's memory over
+ VirtualAlloc, the shader cache's POSIX code over a small shim (flock on a far
+ byte, mmap of the index)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ meson.build                                   |   4 +
+ src/amd/vulkan/winsys/ps5/radv_ps5_platform.c | 148 ++++++++++++++----
+ src/util/disk_cache.c                         |   6 +-
+ src/util/disk_cache_os.c                      |   8 +-
+ src/util/disk_cache_os.h                      |   2 +-
+ src/util/grapnel_win_posix.h                  | 111 +++++++++++++
+ src/util/mesa_cache_db.c                      |   6 +-
+ src/util/mesa_cache_db_multipart.c            |  10 +-
+ src/vulkan/wsi/wsi_common_videoout.c          |   6 +
+ 9 files changed, 263 insertions(+), 38 deletions(-)
+ create mode 100644 src/util/grapnel_win_posix.h
+
+diff --git a/meson.build b/meson.build
+index 96819bd8178..cbf0f203f1d 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1199,6 +1199,10 @@ with_shader_cache = get_option('shader-cache') \
+ 
+ if with_shader_cache
+   pre_args += '-DENABLE_SHADER_CACHE'
++  if host_machine.system() == 'windows'
++    # (Grapnel) the cache's POSIX code over src/util/grapnel_win_posix.h
++    pre_args += '-DGRAPNEL_WIN_CACHE'
++  endif
+   if not get_option('shader-cache-default')
+     pre_args += '-DSHADER_CACHE_DISABLE_BY_DEFAULT'
+   endif
+diff --git a/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c b/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c
+index b8335d7ae69..0544c34bc36 100644
+--- a/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c
++++ b/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c
+@@ -24,6 +24,8 @@
+ #if defined(__PROSPERO__)
+ #include <ps5platform/agc.h>
+ #include <ps5platform/kernel.h>
++#elif defined(_WIN32)   /* (Grapnel, MinGW: the host model on Windows) */
++#include <windows.h>
+ #else
+ #include <sys/mman.h>
+ #endif
+@@ -963,15 +965,119 @@ radv_ps5_memory_unmap_at(void *address, uint64_t bytes, bool reserve)
+ static struct radv_ps5_granules radv_ps5_window;
+ #define RADV_PS5_WINDOW_GRANULE UINT64_C(0x10000)
+ 
++/* The four things the model asks of the system: reserve the window, make part
++ * of it usable or reserved again, and map or unmap private memory. Windows
++ * hands out 64 KiB-aligned regions and frees only whole ones, so an aligned
++ * mapping there is reserved over, released, and taken again at its start. */
++#if defined(_WIN32)
++static void *
++radv_ps5_host_reserve(uint64_t address, uint64_t bytes)
++{
++   return VirtualAlloc((void *)(uintptr_t)address, bytes, MEM_RESERVE, PAGE_NOACCESS);
++}
++
++static bool
++radv_ps5_host_commit(void *at, uint64_t bytes)
++{
++   return VirtualAlloc(at, bytes, MEM_COMMIT, PAGE_READWRITE) == at;
++}
++
+ static void
+-radv_ps5_platform_once(void)
++radv_ps5_host_decommit(void *at, uint64_t bytes)
++{
++   VirtualFree(at, bytes, MEM_DECOMMIT);
++}
++
++static void *
++radv_ps5_host_map(uint64_t address, uint64_t bytes, uint64_t alignment)
++{
++   if (address)
++      return VirtualAlloc((void *)(uintptr_t)address, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
++   for (int attempt = 0; attempt < 8; attempt++) {
++      uint8_t *const raw = VirtualAlloc(NULL, bytes + alignment, MEM_RESERVE, PAGE_NOACCESS);
++      if (!raw)
++         return NULL;
++      uint8_t *const cpu = (uint8_t *)align64((uint64_t)(uintptr_t)raw, alignment);
++      VirtualFree(raw, 0, MEM_RELEASE);
++      void *const got = VirtualAlloc(cpu, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
++      if (got == cpu)
++         return got;
++      if (got)
++         VirtualFree(got, 0, MEM_RELEASE);
++   }
++   return NULL;
++}
++
++static void
++radv_ps5_host_unmap(void *at, uint64_t bytes)
++{
++   (void)bytes;
++   VirtualFree(at, 0, MEM_RELEASE);
++}
++#else
++static void *
++radv_ps5_host_reserve(uint64_t address, uint64_t bytes)
+ {
+-   void *const window = mmap((void *)(uintptr_t)RADV_PS5_WINDOW_BASE, RADV_PS5_WINDOW_BYTES, PROT_NONE,
++   void *const at = mmap((void *)(uintptr_t)address, bytes, PROT_NONE,
++                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
++   if (at != MAP_FAILED && at != (void *)(uintptr_t)address)
++      munmap(at, bytes);
++   return at == (void *)(uintptr_t)address ? at : NULL;
++}
++
++static bool
++radv_ps5_host_commit(void *at, uint64_t bytes)
++{
++   return mprotect(at, bytes, PROT_READ | PROT_WRITE) == 0;
++}
++
++static void
++radv_ps5_host_decommit(void *at, uint64_t bytes)
++{
++   /* Back to reserved, and zero when it is handed out again. */
++   mmap(at, bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
++}
++
++static void *
++radv_ps5_host_map(uint64_t address, uint64_t bytes, uint64_t alignment)
++{
++   if (address) {
++      void *const cpu = mmap((void *)(uintptr_t)address, bytes, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
+-   if (window != (void *)(uintptr_t)RADV_PS5_WINDOW_BASE) {
++      if (cpu == MAP_FAILED)
++         return NULL;
++      if (cpu != (void *)(uintptr_t)address) {
++         munmap(cpu, bytes);
++         return NULL;
++      }
++      return cpu;
++   }
++   /* Over-allocate so the start can be aligned, then trim. */
++   const uint64_t span = bytes + alignment;
++   uint8_t *const raw = mmap(NULL, span, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
++   if (raw == MAP_FAILED)
++      return NULL;
++   uint8_t *const cpu = (uint8_t *)align64((uint64_t)(uintptr_t)raw, alignment);
++   if (cpu > raw)
++      munmap(raw, cpu - raw);
++   const uint8_t *const end = raw + span;
++   if (cpu + bytes < end)
++      munmap(cpu + bytes, end - (cpu + bytes));
++   return cpu;
++}
++
++static void
++radv_ps5_host_unmap(void *at, uint64_t bytes)
++{
++   munmap(at, bytes);
++}
++#endif
++
++static void
++radv_ps5_platform_once(void)
++{
++   if (!radv_ps5_host_reserve(RADV_PS5_WINDOW_BASE, RADV_PS5_WINDOW_BYTES)) {
+       fprintf(stderr, "radv/ps5: the host model could not reserve the address window: %s\n", strerror(errno));
+-      if (window != MAP_FAILED)
+-         munmap(window, RADV_PS5_WINDOW_BYTES);
+       return;
+    }
+    radv_ps5_ready = radv_ps5_granules_init(&radv_ps5_window, RADV_PS5_WINDOW_BASE, RADV_PS5_WINDOW_BYTES,
+@@ -986,7 +1092,7 @@ radv_ps5_platform_unload(void)
+ {
+    if (!radv_ps5_ready)
+       return;
+-   munmap((void *)(uintptr_t)RADV_PS5_WINDOW_BASE, RADV_PS5_WINDOW_BYTES);
++   radv_ps5_host_unmap((void *)(uintptr_t)RADV_PS5_WINDOW_BASE, RADV_PS5_WINDOW_BYTES);
+    free(radv_ps5_window.used);
+    simple_mtx_destroy(&radv_ps5_window.lock);
+ }
+@@ -1030,7 +1136,7 @@ radv_ps5_memory_alloc(uint64_t bytes, uint64_t alignment, bool window32, struct
+          return false;
+       uint8_t *const cpu = (uint8_t *)(uintptr_t)(RADV_PS5_WINDOW_BASE + (uint64_t)first * RADV_PS5_WINDOW_GRANULE);
+       const uint64_t span = (uint64_t)count * RADV_PS5_WINDOW_GRANULE;
+-      if (mprotect(cpu, span, PROT_READ | PROT_WRITE) != 0) {
++      if (!radv_ps5_host_commit(cpu, span)) {
+          radv_ps5_granules_give(&radv_ps5_window, first, count);
+          return false;
+       }
+@@ -1038,17 +1144,9 @@ radv_ps5_memory_alloc(uint64_t bytes, uint64_t alignment, bool window32, struct
+       return true;
+    }
+    alignment = util_next_power_of_two64(MAX2(alignment, RADV_PS5_PAGE_BYTES));
+-   /* Over-allocate so the start can be aligned, then trim. */
+-   const uint64_t span = bytes + alignment;
+-   uint8_t *const raw = mmap(NULL, span, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+-   if (raw == MAP_FAILED)
++   uint8_t *const cpu = radv_ps5_host_map(0, bytes, alignment);
++   if (!cpu)
+       return false;
+-   uint8_t *const cpu = (uint8_t *)align64((uint64_t)(uintptr_t)raw, alignment);
+-   if (cpu > raw)
+-      munmap(raw, cpu - raw);
+-   const uint8_t *const end = raw + span;
+-   if (cpu + bytes < end)
+-      munmap(cpu + bytes, end - (cpu + bytes));
+    *out = (struct radv_ps5_memory){.cpu = cpu, .bytes = bytes, .physical = -1};
+    return true;
+ }
+@@ -1070,7 +1168,7 @@ radv_ps5_memory_alloc_replayable(uint64_t bytes, uint64_t alignment, bool window
+          return false;
+       uint8_t *const cpu = (uint8_t *)(uintptr_t)replay_va;
+       const uint64_t span = (uint64_t)count * RADV_PS5_WINDOW_GRANULE;
+-      if (mprotect(cpu, span, PROT_READ | PROT_WRITE) != 0) {
++      if (!radv_ps5_host_commit(cpu, span)) {
+          radv_ps5_granules_give(&radv_ps5_window, first, count);
+          return false;
+       }
+@@ -1079,14 +1177,9 @@ radv_ps5_memory_alloc_replayable(uint64_t bytes, uint64_t alignment, bool window
+    }
+    if (replay_va % RADV_PS5_PAGE_BYTES)
+       return false;
+-   void *const cpu = mmap((void *)(uintptr_t)replay_va, bytes, PROT_READ | PROT_WRITE,
+-                          MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
+-   if (cpu == MAP_FAILED)
+-      return false;
+-   if (cpu != (void *)(uintptr_t)replay_va) {
+-      munmap(cpu, bytes);
++   void *const cpu = radv_ps5_host_map(replay_va, bytes, RADV_PS5_PAGE_BYTES);
++   if (!cpu)
+       return false;
+-   }
+    *out = (struct radv_ps5_memory){.cpu = cpu, .bytes = bytes, .physical = -1};
+    return true;
+ }
+@@ -1151,11 +1244,10 @@ radv_ps5_memory_free(struct radv_ps5_memory *memory)
+    if (!memory->cpu)
+       return;
+    if (radv_ps5_window_contains((uint64_t)(uintptr_t)memory->cpu, memory->bytes)) {
+-      /* Back to reserved, and zero when it is handed out again. */
+-      mmap(memory->cpu, memory->bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
++      radv_ps5_host_decommit(memory->cpu, memory->bytes);
+       radv_ps5_granules_give(&radv_ps5_window, memory->granule, memory->granules);
+    } else {
+-      munmap(memory->cpu, memory->bytes);
++      radv_ps5_host_unmap(memory->cpu, memory->bytes);
+    }
+    *memory = (struct radv_ps5_memory){.physical = -1};
+ }
+diff --git a/src/util/disk_cache.c b/src/util/disk_cache.c
+index 1f4338820dd..6fcf74fbf85 100644
+--- a/src/util/disk_cache.c
++++ b/src/util/disk_cache.c
+@@ -28,10 +28,14 @@
+ #include <string.h>
+ #include <stdlib.h>
+ #include <stdio.h>
+-#include <sys/file.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
++#ifdef _WIN32   /* (Grapnel, MinGW) */
++#include "util/grapnel_win_posix.h"
++#else
++#include <sys/file.h>
+ #include <sys/mman.h>
++#endif
+ #include <fcntl.h>
+ #include <errno.h>
+ #include <dirent.h>
+diff --git a/src/util/disk_cache_os.c b/src/util/disk_cache_os.c
+index eefa2d51526..8e79c13adcf 100644
+--- a/src/util/disk_cache_os.c
++++ b/src/util/disk_cache_os.c
+@@ -81,18 +81,22 @@ disk_cache_get_function_identifier(void *ptr, blake3_hasher *ctx)
+ 
+ #ifdef ENABLE_SHADER_CACHE
+ 
+-#if DETECT_OS_WINDOWS
++#if DETECT_OS_WINDOWS && !defined(GRAPNEL_WIN_CACHE)
+ /* TODO: implement disk cache support on windows */
+ 
+ #else
+ 
+ #include <dirent.h>
+ #include <errno.h>
+-#include <pwd.h>
+ #include <stdio.h>
+ #include <string.h>
++#ifdef _WIN32
++#include "util/grapnel_win_posix.h"
++#else
++#include <pwd.h>
+ #include <sys/file.h>
+ #include <sys/mman.h>
++#endif
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+diff --git a/src/util/disk_cache_os.h b/src/util/disk_cache_os.h
+index 8950839e463..c615a1a73c3 100644
+--- a/src/util/disk_cache_os.h
++++ b/src/util/disk_cache_os.h
+@@ -27,7 +27,7 @@
+ #include "util/u_queue.h"
+ #include "util/disk_cache.h"
+ 
+-#if DETECT_OS_WINDOWS
++#if DETECT_OS_WINDOWS && !defined(GRAPNEL_WIN_CACHE)
+ 
+ /* TODO: implement disk cache support on windows */
+ 
+diff --git a/src/util/grapnel_win_posix.h b/src/util/grapnel_win_posix.h
+new file mode 100644
+index 00000000000..0494c009491
+--- /dev/null
++++ b/src/util/grapnel_win_posix.h
+@@ -0,0 +1,111 @@
++/*
++ * Copyright 2026 Grapnel contributors
++ * SPDX-License-Identifier: MIT
++ *
++ * (Grapnel, MinGW) The few POSIX calls the shader cache makes, for Windows,
++ * so the cache a Windows PC fills is laid out as the console's driver reads
++ * it. Only the cache's files include this, and only on _WIN32.
++ */
++#ifndef GRAPNEL_WIN_POSIX_H
++#define GRAPNEL_WIN_POSIX_H
++
++#ifdef _WIN32
++
++#include <direct.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <io.h>
++#include <stdint.h>
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <windows.h>
++
++/* Files are bytes; children inherit none. */
++#ifndef O_CLOEXEC
++#define O_CLOEXEC (O_NOINHERIT | O_BINARY)
++#endif
++
++/* mkdir has no mode on Windows. */
++#define mkdir(path, mode) _mkdir(path)
++
++static inline int
++fchmod(int fd, int mode)
++{
++   (void)fd;
++   (void)mode;
++   return 0;
++}
++
++/* flock: an advisory lock. Windows locks are mandatory over the bytes they
++ * cover, so the lock is taken on one byte far past any file's end, where no
++ * read or write of the cache ever goes. */
++#define LOCK_SH 1
++#define LOCK_EX 2
++#define LOCK_NB 4
++#define LOCK_UN 8
++#define GRAPNEL_LOCK_OFFSET_HI 0x7fffffffu
++
++static inline int
++flock(int fd, int op)
++{
++   HANDLE h = (HANDLE)_get_osfhandle(fd);
++   if (h == INVALID_HANDLE_VALUE) {
++      errno = EBADF;
++      return -1;
++   }
++   OVERLAPPED at = {0};
++   at.OffsetHigh = GRAPNEL_LOCK_OFFSET_HI;
++   if (op & LOCK_UN)
++      return UnlockFileEx(h, 0, 1, 0, &at) ? 0 : -1;
++   DWORD flags = (op & LOCK_EX) ? LOCKFILE_EXCLUSIVE_LOCK : 0;
++   if (op & LOCK_NB)
++      flags |= LOCKFILE_FAIL_IMMEDIATELY;
++   if (LockFileEx(h, flags, 0, 1, 0, &at))
++      return 0;
++   errno = GetLastError() == ERROR_LOCK_VIOLATION ? EWOULDBLOCK : EIO;
++   return -1;
++}
++
++/* mmap: only what the cache's index asks, a shared read-write view of a
++ * whole file from its start. */
++#define PROT_NONE 0
++#define PROT_READ 1
++#define PROT_WRITE 2
++#define MAP_SHARED 1
++#define MAP_PRIVATE 2
++#define MAP_FAILED ((void *)-1)
++
++static inline void *
++mmap(void *address, size_t bytes, int prot, int flags, int fd, int64_t offset)
++{
++   (void)address;
++   if (!(flags & MAP_SHARED) || fd < 0) {
++      errno = EINVAL;
++      return MAP_FAILED;
++   }
++   HANDLE file = (HANDLE)_get_osfhandle(fd);
++   const bool write = (prot & PROT_WRITE) != 0;
++   HANDLE mapping = CreateFileMappingW(file, NULL, write ? PAGE_READWRITE : PAGE_READONLY, 0, 0, NULL);
++   if (!mapping) {
++      errno = ENOMEM;
++      return MAP_FAILED;
++   }
++   void *view = MapViewOfFile(mapping, write ? FILE_MAP_WRITE : FILE_MAP_READ, (DWORD)((uint64_t)offset >> 32),
++                              (DWORD)offset, bytes);
++   CloseHandle(mapping); /* the view keeps the mapping */
++   if (!view) {
++      errno = ENOMEM;
++      return MAP_FAILED;
++   }
++   return view;
++}
++
++static inline int
++munmap(void *address, size_t bytes)
++{
++   (void)bytes;
++   return UnmapViewOfFile(address) ? 0 : -1;
++}
++
++#endif /* _WIN32 */
++#endif /* GRAPNEL_WIN_POSIX_H */
+diff --git a/src/util/mesa_cache_db.c b/src/util/mesa_cache_db.c
+index ae12f117f3b..dcb2d2e18af 100644
+--- a/src/util/mesa_cache_db.c
++++ b/src/util/mesa_cache_db.c
+@@ -9,13 +9,17 @@
+ 
+ #include "detect_os.h"
+ 
+-#if DETECT_OS_WINDOWS == 0
++#if DETECT_OS_WINDOWS == 0 || defined(GRAPNEL_WIN_CACHE)
+ 
+ #include <fcntl.h>
+ #include <stddef.h>
+ #include <stdlib.h>
+ #include <string.h>
++#ifdef _WIN32
++#include "grapnel_win_posix.h"
++#else
+ #include <sys/file.h>
++#endif
+ #include <sys/stat.h>
+ #include <unistd.h>
+ 
+diff --git a/src/util/mesa_cache_db_multipart.c b/src/util/mesa_cache_db_multipart.c
+index 8c3c24b0cf1..5f9ac1e8b8c 100644
+--- a/src/util/mesa_cache_db_multipart.c
++++ b/src/util/mesa_cache_db_multipart.c
+@@ -19,7 +19,7 @@
+ #define EXCLUSIVE_DEFAULT false
+ #endif
+ 
+-#if !DETECT_OS_WINDOWS
++#if !DETECT_OS_WINDOWS || defined(GRAPNEL_WIN_CACHE)
+ /* The parts opened exclusively, by path: a second cache of this process on
+  * the same path shares them, as their locks would otherwise shut it out. */
+ struct owned_part {
+@@ -93,7 +93,7 @@ bool
+ mesa_cache_db_multipart_open(struct mesa_cache_db_multipart *db,
+                              const char *cache_path)
+ {
+-#if DETECT_OS_WINDOWS
++#if DETECT_OS_WINDOWS && !defined(GRAPNEL_WIN_CACHE)
+    return false;
+ #else
+    db->num_parts = debug_get_num_option("MESA_DISK_CACHE_DATABASE_NUM_PARTS", 50);
+@@ -113,7 +113,7 @@ static bool
+ mesa_cache_db_multipart_init_part_locked(struct mesa_cache_db_multipart *db,
+                                          unsigned int part)
+ {
+-#if DETECT_OS_WINDOWS
++#if DETECT_OS_WINDOWS && !defined(GRAPNEL_WIN_CACHE)
+    return false;
+ #else
+    struct mesa_cache_db *db_part;
+@@ -184,7 +184,7 @@ static bool
+ mesa_cache_db_multipart_part_exists(struct mesa_cache_db_multipart *db,
+                                     unsigned int part)
+ {
+-#if DETECT_OS_WINDOWS
++#if DETECT_OS_WINDOWS && !defined(GRAPNEL_WIN_CACHE)
+    return false;
+ #else
+    char *part_path = NULL;
+@@ -223,7 +223,7 @@ mesa_cache_db_multipart_close(struct mesa_cache_db_multipart *db)
+    while (db->num_parts--) {
+       if (!db->parts[db->num_parts])
+          continue;
+-#if !DETECT_OS_WINDOWS
++#if !DETECT_OS_WINDOWS || defined(GRAPNEL_WIN_CACHE)
+       if (db->exclusive) {
+          owned_part_close(db->parts[db->num_parts]);
+          continue;
+diff --git a/src/vulkan/wsi/wsi_common_videoout.c b/src/vulkan/wsi/wsi_common_videoout.c
+index 1f59ac2120e..c87238d3b87 100644
+--- a/src/vulkan/wsi/wsi_common_videoout.c
++++ b/src/vulkan/wsi/wsi_common_videoout.c
+@@ -61,6 +61,8 @@
+ #include <immintrin.h>
+ #include <ps5platform/kernel.h>
+ #include <ps5platform/videoout.h>
++#elif defined(_WIN32)   /* (Grapnel, MinGW: the PC model's buffers are plain memory) */
++#include <windows.h>
+ #else
+ #include <sys/mman.h>
+ #endif
+@@ -481,6 +483,10 @@ videoout_register_locked(const struct wsi_videoout_size *size, const struct wsi_
+    for (size_t at = 0; at < bytes; at += 64)
+       _mm_clflush(buffers + at);
+    _mm_mfence();
++#elif defined(_WIN32)
++   buffers = VirtualAlloc(NULL, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
++   if (!buffers)
++      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+ #else
+    buffers = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (buffers == MAP_FAILED)

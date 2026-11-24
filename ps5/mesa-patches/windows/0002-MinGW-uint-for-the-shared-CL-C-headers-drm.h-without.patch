@@ -1,0 +1,53 @@
+Subject: [PATCH 2/4] MinGW: uint for the shared CL/C headers, drm.h without
+ sys/ioccom.h, the Vulkan runtime's Win32 entry points declared
+
+---
+ include/drm-uapi/drm.h     | 2 +-
+ src/compiler/libcl/libcl.h | 7 +++++++
+ src/vulkan/meson.build     | 2 +-
+ 3 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/include/drm-uapi/drm.h b/include/drm-uapi/drm.h
+index ceb0f9ec8a5..a8c24ae1ec3 100644
+--- a/include/drm-uapi/drm.h
++++ b/include/drm-uapi/drm.h
+@@ -47,7 +47,7 @@ typedef unsigned int drm_handle_t;
+ #include <sys/types.h>
+ #if defined(__GNU__)
+ #include <sys/ioctl.h>
+-#else
++#elif !defined(_WIN32)   /* (Grapnel, MinGW: the types below are all a Windows build needs) */
+ #include <sys/ioccom.h>
+ #endif
+ typedef int8_t   __s8;
+diff --git a/src/compiler/libcl/libcl.h b/src/compiler/libcl/libcl.h
+index 2c697b1a80d..2a941b1ccd7 100644
+--- a/src/compiler/libcl/libcl.h
++++ b/src/compiler/libcl/libcl.h
+@@ -34,6 +34,13 @@
+ #define GLOBAL
+ #define CONST const
+ 
++/* (Grapnel, MinGW) the shared headers use OpenCL's uint, which glibc's <sys/types.h> also gives C; MinGW has none */
++#if defined(_WIN32) && !defined(__cplusplus)
++typedef unsigned int uint;
++#elif defined(_WIN32)
++typedef unsigned int uint;
++#endif
++
+ #else
+ 
+ /* GenXML likes to use fp16. Since fp16 is supported by all grown up drivers, we
+diff --git a/src/vulkan/meson.build b/src/vulkan/meson.build
+index 1c2a3ca5513..e3ee5f4d7ad 100644
+--- a/src/vulkan/meson.build
++++ b/src/vulkan/meson.build
+@@ -68,7 +68,7 @@ endif
+ if with_platform_android
+   vulkan_wsi_list += '-DVK_USE_PLATFORM_ANDROID_KHR'
+ endif
+-if with_platform_windows
++if with_platform_windows or host_machine.system() == 'windows'   # (Grapnel: the runtime's Win32 entry points, no Win32 WSI)
+   vulkan_wsi_list += '-DVK_USE_PLATFORM_WIN32_KHR'
+ endif
+ if with_platform_macos

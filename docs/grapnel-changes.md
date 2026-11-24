@@ -3,7 +3,7 @@
 Grapnel is a modified version of Longshot (https://git.magicbean.dev/MagicBeanDev/Longshot), from its commit
 `ac778751` of 2026-11-16, with later Longshot changes carried over. This repository has no development history (it is
 a snapshot), so this list is the notice of what was changed and when, as section 5a of the GPL-3.0 asks: every file
-added, modified or removed since that commit, with the date it last changed. Snapshot of 2026-11-23.
+added, modified or removed since that commit, with the date it last changed. Snapshot of 2026-11-24.
 
 Inside the files, comments marked `(ps5)`, `(hookshot-ps5)` or `(grapnel)` say what the port changed and why.
 
@@ -18,15 +18,15 @@ licence, and a save made with the game):
 
 ## Files
 
-269 added, 156 modified, 2 removed.
+290 added, 160 modified, 2 removed.
 
 | Change | File | Last changed |
 |---|---|---|
-| added | `.github/README.md` | 2026-11-23 |
+| added | `.github/README.md` | 2026-11-24 |
 | modified | `.gitignore` | 2026-11-23 |
 | modified | `CONTRIBUTING.md` | 2026-11-23 |
-| added | `CREDITS.md` | 2026-11-23 |
-| added | `NOTICE.md` | 2026-11-23 |
+| added | `CREDITS.md` | 2026-11-24 |
+| added | `NOTICE.md` | 2026-11-24 |
 | modified | `README.md` | 2026-11-23 |
 | added | `assets/grapnel.png` | 2026-11-23 |
 | removed | `assets/longshot.png` | 2026-11-23 |
@@ -34,7 +34,7 @@ licence, and a save made with the game):
 | removed | `builder/setup/longshot.ico` | 2026-11-23 |
 | modified | `builder/setup/setup.rc` | 2026-11-23 |
 | modified | `docs/development.md` | 2026-11-22 |
-| added | `docs/grapnel-changes.md` | 2026-11-23 |
+| added | `docs/grapnel-changes.md` | 2026-11-24 |
 | added | `docs/ps5-port.md` | 2026-11-23 |
 | added | `docs/tested/2026-11-16-astc-reuse-joeymagnus-off.md` | 2026-11-17 |
 | added | `docs/tested/2026-11-16-astc-reuse-joeymagnus-on.md` | 2026-11-17 |
@@ -73,9 +73,9 @@ licence, and a save made with the game):
 | added | `gpu/vk/host_shaders/bc_encoder_levels_direct_comp_spv.h` | 2026-11-22 |
 | added | `gpu/vk/launcher_back.h` | 2026-11-23 |
 | added | `gpu/vk/launcher_check.h` | 2026-11-22 |
-| added | `gpu/vk/launcher_logic.h` | 2026-11-23 |
+| added | `gpu/vk/launcher_logic.h` | 2026-11-24 |
 | added | `gpu/vk/load_peak.h` | 2026-11-12 |
-| modified | `gpu/vk/menu_i18n.h` | 2026-11-23 |
+| modified | `gpu/vk/menu_i18n.h` | 2026-11-24 |
 | added | `gpu/vk/mihawkgen_glue.h` | 2026-11-16 |
 | added | `gpu/vk/shadow_store.h` | 2026-11-15 |
 | modified | `gpu/vk/target_pool.h` | 2026-11-17 |
@@ -99,7 +99,7 @@ licence, and a save made with the game):
 | modified | `gpu/vk/vk_loader.h` | 2026-11-16 |
 | modified | `gpu/vk/vk_main.cpp` | 2026-11-23 |
 | modified | `gpu/vk/vk_memory.cpp` | 2026-11-22 |
-| modified | `gpu/vk/vk_menu.cpp` | 2026-11-23 |
+| modified | `gpu/vk/vk_menu.cpp` | 2026-11-24 |
 | modified | `gpu/vk/vk_menu.h` | 2026-11-22 |
 | modified | `gpu/vk/vk_paths.h` | 2026-11-23 |
 | modified | `gpu/vk/vk_progcache.cpp` | 2026-11-23 |
@@ -145,7 +145,7 @@ licence, and a save made with the game):
 | modified | `host/oot_voice.c` | 2026-11-16 |
 | modified | `host/options_path.c` | 2026-11-16 |
 | modified | `host/posix/display_sdl.c` | 2026-11-16 |
-| added | `host/posix/hos_sdl_ps5.c` | 2026-11-21 |
+| added | `host/posix/hos_sdl_ps5.c` | 2026-11-24 |
 | added | `host/posix/ps5.h` | 2026-11-23 |
 | added | `host/posix/ps5_broker.h` | 2026-11-23 |
 | added | `host/posix/ps5_broker_client.c` | 2026-11-23 |
@@ -159,11 +159,12 @@ licence, and a save made with the game):
 | added | `host/posix/ps5_files.c` | 2026-11-23 |
 | added | `host/posix/ps5_heap_pieces.c` | 2026-11-12 |
 | added | `host/posix/ps5_helpers.h` | 2026-11-22 |
+| added | `host/posix/ps5_mic.h` | 2026-11-24 |
 | added | `host/posix/ps5_noffmpeg/libavcodec/avcodec.h` | 2026-11-09 |
 | added | `host/posix/ps5_noffmpeg/libswscale/swscale.h` | 2026-11-09 |
 | added | `host/posix/ps5_platform.c` | 2026-11-23 |
 | added | `host/posix/ps5_pthread_count.c` | 2026-11-10 |
-| added | `host/posix/ps5_relaunch.c` | 2026-11-23 |
+| added | `host/posix/ps5_relaunch.c` | 2026-11-24 |
 | added | `host/posix/ps5_relaunch.h` | 2026-11-23 |
 | added | `host/posix/ps5_stdio.c` | 2026-11-23 |
 | added | `host/posix/ps5_stubs.c` | 2026-11-16 |
@@ -176,7 +177,7 @@ licence, and a save made with the game):
 | modified | `host/rx_backend.c` | 2026-11-16 |
 | added | `host/shadow_slot.h` | 2026-11-17 |
 | modified | `host/texts.c` | 2026-11-16 |
-| modified | `nx2/build.py` | 2026-11-23 |
+| modified | `nx2/build.py` | 2026-11-24 |
 | modified | `nx2/fastfp.py` | 2026-11-17 |
 | modified | `nx2/logo_rgba.py` | 2026-11-23 |
 | modified | `nx2/make_game.py` | 2026-11-23 |
@@ -185,11 +186,11 @@ licence, and a save made with the game):
 | modified | `nx2/test_leaf.py` | 2026-11-17 |
 | added | `nx2/test_shim/windows.h` | 2026-11-17 |
 | modified | `nx2/test_texture_init_barrier.py` | 2026-11-16 |
-| added | `nx2/toolchain_ps5.py` | 2026-11-23 |
+| added | `nx2/toolchain_ps5.py` | 2026-11-24 |
 | modified | `nx2/zbic.py` | 2026-11-23 |
 | added | `nx2/zbic_unpack/zbic_unpack.c` | 2026-11-23 |
-| added | `ps5/DEPENDENCIES.md` | 2026-11-23 |
-| added | `ps5/hookshot_env.default.txt` | 2026-11-23 |
+| added | `ps5/DEPENDENCIES.md` | 2026-11-24 |
+| added | `ps5/hookshot_env.default.txt` | 2026-11-24 |
 | added | `ps5/mesa-patches/0001-radv-ps5-an-emulated-indirect-task-draw-costs-what-its-count.patch` | 2026-11-23 |
 | added | `ps5/mesa-patches/0002-ac-nir-ngg_mesh-a-mesh-shader-that-never-sets-its-outputs-em.patch` | 2026-11-23 |
 | added | `ps5/mesa-patches/0003-radv-ps5-the-command-processor-skips-an-emulated-indirect-ta.patch` | 2026-11-23 |
@@ -197,23 +198,40 @@ licence, and a save made with the game):
 | added | `ps5/mesa-patches/0005-radv-ps5-three-experiments-on-waiting-for-the-shaders-RADV_P.patch` | 2026-11-23 |
 | added | `ps5/mesa-patches/0006-radv-ps5-narrower-waits-between-draws-late-allocation-and-sh.patch` | 2026-11-23 |
 | added | `ps5/mesa-patches/0007-radv-ps5-RADV_PS5_LATE_ALLOC-masks-and-gfx10-make-the-CU-mas.patch` | 2026-11-23 |
-| added | `ps5/mesa-patches/README.md` | 2026-11-23 |
+| added | `ps5/mesa-patches/README.md` | 2026-11-24 |
+| added | `ps5/mesa-patches/windows/0001-meson-allow-the-shader-cache-on-Windows-Grapnel-s-pr.patch` | 2026-11-24 |
+| added | `ps5/mesa-patches/windows/0002-MinGW-uint-for-the-shared-CL-C-headers-drm.h-without.patch` | 2026-11-24 |
+| added | `ps5/mesa-patches/windows/0003-Windows-MinGW-the-host-model-s-memory-over-VirtualAl.patch` | 2026-11-24 |
+| added | `ps5/mesa-patches/windows/0004-Windows-MinGW-the-cache-s-last-POSIX-calls-fstatat-s.patch` | 2026-11-24 |
+| added | `ps5/mesa-patches/windows/README.md` | 2026-11-24 |
 | added | `ps5/skip.txt` | 2026-11-23 |
-| added | `scripts/grapnel-builder/INSTALL.fr.md` | 2026-11-23 |
-| added | `scripts/grapnel-builder/INSTALL.md` | 2026-11-23 |
+| added | `ps5/stubs/libSceAudioIn_link_stub.c` | 2026-11-24 |
+| added | `scripts/grapnel-builder/INSTALL.fr.md` | 2026-11-24 |
+| added | `scripts/grapnel-builder/INSTALL.md` | 2026-11-24 |
 | added | `scripts/grapnel-builder/art/hookshot_menu_fond.png` | 2026-11-23 |
 | added | `scripts/grapnel-builder/art/icon0.png` | 2026-11-23 |
 | added | `scripts/grapnel-builder/art/pic0.dds` | 2026-11-23 |
-| added | `scripts/grapnel-builder/data/hookshot_env.txt` | 2026-11-23 |
+| added | `scripts/grapnel-builder/check_windows_objects.py` | 2026-11-23 |
+| added | `scripts/grapnel-builder/data/hookshot_env.txt` | 2026-11-24 |
 | added | `scripts/grapnel-builder/data/skip.txt` | 2026-11-23 |
-| added | `scripts/grapnel-builder/grapnel_build.py` | 2026-11-23 |
-| added | `scripts/grapnel-builder/grapnel_core.py` | 2026-11-23 |
-| added | `scripts/grapnel-builder/make_prepare_tool.py` | 2026-11-23 |
-| added | `scripts/grapnel-builder/make_toolchain.py` | 2026-11-23 |
+| added | `scripts/grapnel-builder/grapnel_build.py` | 2026-11-24 |
+| added | `scripts/grapnel-builder/grapnel_core.py` | 2026-11-24 |
+| added | `scripts/grapnel-builder/grapnel_gui.py` | 2026-11-24 |
+| added | `scripts/grapnel-builder/grapnel_send.py` | 2026-11-24 |
+| added | `scripts/grapnel-builder/make_prepare_driver.sh` | 2026-11-24 |
+| added | `scripts/grapnel-builder/make_prepare_tool.py` | 2026-11-24 |
+| added | `scripts/grapnel-builder/make_toolchain.py` | 2026-11-24 |
+| added | `scripts/grapnel-builder/make_windows_llvm.sh` | 2026-11-24 |
+| added | `scripts/grapnel-builder/make_windows_package.py` | 2026-11-24 |
 | added | `scripts/grapnel-builder/profile/chunks.txt` | 2026-11-23 |
 | added | `scripts/grapnel-builder/profile/hot_funcs.txt` | 2026-11-23 |
 | added | `scripts/grapnel-builder/profile/hot_pieces.txt` | 2026-11-23 |
 | added | `scripts/grapnel-builder/requirements.txt` | 2026-11-23 |
+| added | `scripts/grapnel-builder/window/grapnel.ico` | 2026-11-23 |
+| added | `scripts/grapnel-builder/window/grapnel.png` | 2026-11-23 |
+| added | `scripts/grapnel-builder/window/launcher.c` | 2026-11-23 |
+| added | `scripts/grapnel-builder/window/launcher.manifest` | 2026-11-23 |
+| added | `scripts/grapnel-builder/window/launcher.rc` | 2026-11-23 |
 | modified | `scripts/host_shaders.py` | 2026-11-22 |
 | modified | `scripts/linux/appimage.sh` | 2026-11-23 |
 | added | `scripts/ps5/boot/boot_nogame.c` | 2026-11-09 |
@@ -251,6 +269,7 @@ licence, and a save made with the game):
 | modified | `tests/direct_buffer_writes_test.cpp` | 2026-11-22 |
 | modified | `tests/fallback_buffer_cleanup_test.cpp` | 2026-11-16 |
 | modified | `tests/fsr_image_retirement_test.cpp` | 2026-11-22 |
+| added | `tests/ftp_fake.py` | 2026-11-24 |
 | added | `tests/gpu_trail_glue_test.cpp` | 2026-11-11 |
 | added | `tests/gpu_trail_off.h` | 2026-11-11 |
 | added | `tests/gt_off.h` | 2026-11-16 |
@@ -276,6 +295,9 @@ licence, and a save made with the game):
 | added | `tests/test_cheap_clock.py` | 2026-11-22 |
 | added | `tests/test_cold.py` | 2026-11-16 |
 | added | `tests/test_compile_heap.py` | 2026-11-15 |
+| modified | `tests/test_compile_retry_jobs.py` | 2026-11-23 |
+| modified | `tests/test_compile_stops_on_exception.py` | 2026-11-23 |
+| modified | `tests/test_compiler_failure.py` | 2026-11-23 |
 | added | `tests/test_console_prepare.py` | 2026-11-23 |
 | modified | `tests/test_cpu_target.py` | 2026-11-16 |
 | modified | `tests/test_crash_dialog.py` | 2026-11-16 |
@@ -299,14 +321,15 @@ licence, and a save made with the game):
 | modified | `tests/test_gpl_library_cache.py` | 2026-11-16 |
 | added | `tests/test_gpu_trail.cpp` | 2026-11-11 |
 | added | `tests/test_gpu_trail.py` | 2026-11-22 |
-| added | `tests/test_grapnel_builder.py` | 2026-11-23 |
+| added | `tests/test_grapnel_builder.py` | 2026-11-24 |
+| added | `tests/test_grapnel_send.py` | 2026-11-24 |
 | modified | `tests/test_guest_holes.py` | 2026-11-16 |
 | added | `tests/test_heap_pieces.py` | 2026-11-15 |
 | modified | `tests/test_import_buffer_binding.py` | 2026-11-16 |
 | modified | `tests/test_jobs_wait_runs_queued.py` | 2026-11-16 |
 | modified | `tests/test_late_fix_build.py` | 2026-11-22 |
 | added | `tests/test_launcher_check.py` | 2026-11-22 |
-| added | `tests/test_launcher_logic.py` | 2026-11-23 |
+| added | `tests/test_launcher_logic.py` | 2026-11-24 |
 | modified | `tests/test_linux_driver_fault_guard.py` | 2026-11-22 |
 | modified | `tests/test_linux_saves_move.py` | 2026-11-16 |
 | added | `tests/test_load_peak.cpp` | 2026-11-12 |
@@ -314,6 +337,7 @@ licence, and a save made with the game):
 | modified | `tests/test_log_open_failure.py` | 2026-11-16 |
 | modified | `tests/test_lost_wait_said.py` | 2026-11-16 |
 | modified | `tests/test_low_vram_texture_mips.py` | 2026-11-22 |
+| modified | `tests/test_mem_gate_leases.py` | 2026-11-23 |
 | added | `tests/test_meminfo_pages.py` | 2026-11-16 |
 | modified | `tests/test_menu_env_overrides.py` | 2026-11-22 |
 | modified | `tests/test_menu_i18n.py` | 2026-11-23 |
@@ -343,7 +367,8 @@ licence, and a save made with the game):
 | added | `tests/test_ps5_lot46_off_unless_set.py` | 2026-11-17 |
 | added | `tests/test_ps5_menu_chord.py` | 2026-11-23 |
 | added | `tests/test_ps5_menu_fond.py` | 2026-11-22 |
-| added | `tests/test_ps5_menu_rows.py` | 2026-11-23 |
+| added | `tests/test_ps5_menu_rows.py` | 2026-11-24 |
+| added | `tests/test_ps5_microphone.py` | 2026-11-24 |
 | added | `tests/test_ps5_options_in_place.py` | 2026-11-16 |
 | added | `tests/test_ps5_options_round_trip.py` | 2026-11-22 |
 | added | `tests/test_ps5_prompts_switch.py` | 2026-11-22 |
@@ -373,7 +398,7 @@ licence, and a save made with the game):
 | added | `tests/test_tex_storage.cpp` | 2026-11-10 |
 | added | `tests/test_tex_storage.py` | 2026-11-12 |
 | modified | `tests/test_texel_buffer_ownership.py` | 2026-11-16 |
-| modified | `tests/test_third_party_objects.py` | 2026-11-16 |
+| modified | `tests/test_third_party_objects.py` | 2026-11-23 |
 | added | `tests/test_thread_times.py` | 2026-11-16 |
 | modified | `tests/test_threaded_rendering.py` | 2026-11-16 |
 | added | `tests/test_tsc_clock.c` | 2026-11-22 |

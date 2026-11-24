@@ -26,8 +26,8 @@ A failure is a BuildError: .code (a short stable name a window can translate or 
 player, English), .details (the log's last lines, or ''), .log (the log file, or None).
 
 The core needs no shell: it runs Python and the toolchain's programs directly. (The console toolchain itself still runs bash
-scripts in v0.1: the payload SDK's prospero-* wrappers and PS5_Vulkan's tools/radv-link.sh, through nx2/build.py. v0.2 replaces
-them for Windows: notes-agents/constructeur-grapnel.md, section 10.) Linux-only parts are optional: the memory sampler (/proc),
+scripts in v0.1: the payload SDK's prospero-* wrappers and PS5_Vulkan's tools/radv-link.sh, through nx2/build.py. v0.2 runs
+the LLVM tools directly with the toolchain's ps5_recipe.json, on Windows and Linux: nx2/toolchain_ps5.py.) Linux-only parts are optional: the memory sampler (/proc),
 the --lock file lock (fcntl), the niceness.
 
 What the build needs, and the steps' details: grapnel_build.py's docstring and INSTALL.md beside this file.
@@ -55,7 +55,7 @@ if NX2 not in sys.path:
     sys.path.insert(0, NX2)
 import toolchain_ps5  # noqa: E402  (only os and subprocess: where the SDK and PS5_Vulkan are, the title's id and name)
 
-VERSION = "0.1"
+VERSION = "0.2"
 STEPS = ["Reading the game's program", "Translating it to C", "Compiling and linking for the console",
          "Putting the title and data folders together", "Making the button icons",
          "Listing the game's shaders", "Preparing the shaders on this PC", "Writing the notes"]
@@ -110,6 +110,30 @@ PREP_PLATFORM_ONLY = ("HOS_VCORES", "HOS_TSC_CLOCK", "RX_VK_SKIP_FILE", "MESA_SH
 # which walks RX_VK_MMA* off the console, and the console would take the preparation for another translator's)
 PREP_CONSOLE_DEFAULTS = {}
 PREP_TRIES = 6           # (runs that stop short of memory, or on a compile that never ends, go on where they stopped)
+# (a preparation run says where it is every 10 s: one silent this long is stuck (a run under Wine stopped once with all its
+# threads waiting, 23/11/2026), is ended and goes on where it stopped, as exit 14)
+PREP_SILENT_S = 900
+SILENT_EXIT = 15
+
+
+def crashed(code):
+    """A run that ended on a crash: an NTSTATUS error on Windows (0xC0000005 an access violation, 0xC00000FD a stack overflow:
+    a run under Wine ended so once, 24/11/2026, its cause not found), a signal on Linux"""
+    return (code >= 0xC0000000) if os.name == "nt" else code < 0
+
+
+def quiet_crashes():
+    """(windows) No window when a program the builder starts crashes, the preparation or a compiler: the error mode the
+    children inherit (SEM_NOGPFAULTERRORBOX: Windows' error reporting, and a debugger's dialog under Wine, are not started;
+    the program ends with its code, which the builder reads). The preparation then goes on where it stopped"""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.SetErrorMode(k.GetErrorMode() | 0x0001 | 0x0002 | 0x8000)   # (FAILCRITICALERRORS, NOGPFAULTERRORBOX, NOOPENFILEERRORBOX)
+    except (OSError, AttributeError):
+        pass
 PREP_MIN_ENTRIES = 40000  # (a whole preparation makes ~59,000 cache entries: fewer is a preparation cut short)
 PREP_PROGRESS = re.compile(r"vk: prepare: (\d+) s: step (\d) of 3, ([^,]+), item (\d+) of (\d+) \((\d+)% of the work, (.+?) left\); "
                            r"(\d+) pipelines built; (-?\d+) MiB free")
@@ -214,6 +238,8 @@ class Sampler(threading.Thread):
 
 
 def mem_available_gb():
+    if os.name == "nt":   # (grapnel, Windows: the available physical memory)
+        return windows_memory()[1]
     try:
         with open("/proc/meminfo") as f:
             for line in f:
@@ -222,6 +248,54 @@ def mem_available_gb():
     except (OSError, ValueError):
         pass
     return None
+
+
+WINDOWS_ENV = ("USERPROFILE", "LOCALAPPDATA", "APPDATA", "PROGRAMDATA", "WINDIR", "COMSPEC", "PATHEXT", "NUMBER_OF_PROCESSORS",
+               "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "OS")   # (grapnel, Windows: what its programs expect to find)
+
+
+def windows_memory():
+    """(grapnel, Windows) (total, available) physical memory in GiB, GlobalMemoryStatusEx; (None, None) when it does not answer"""
+    import ctypes
+
+    class Status(ctypes.Structure):
+        _fields_ = [("length", ctypes.c_uint32), ("load", ctypes.c_uint32), ("total", ctypes.c_uint64), ("avail", ctypes.c_uint64),
+                    ("page_total", ctypes.c_uint64), ("page_avail", ctypes.c_uint64), ("virtual_total", ctypes.c_uint64),
+                    ("virtual_avail", ctypes.c_uint64), ("extended", ctypes.c_uint64)]
+    st = Status()
+    st.length = ctypes.sizeof(Status)
+    try:
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+            return st.total / 2 ** 30, st.avail / 2 ** 30
+    except (OSError, AttributeError):
+        pass
+    return None, None
+
+
+def find_llvm_bin(given):
+    """(grapnel) LLVM 19.1.7 from its bin folder alone, with no llvm-config (the Windows builder's own LLVM): clang and ld.lld say
+    19.1.7, and llvm-ar, llvm-nm, llvm-objcopy are there. The same dict as find_llvm, builtins None (the toolchain folder has them)"""
+    x = ".exe" if os.name == "nt" else ""
+    seen = []
+    for bindir in ([os.path.join(os.path.abspath(given), "bin"), os.path.abspath(given)] if given else []):
+        missing = [n + x for n in ("clang", "ld.lld", "llvm-ar", "llvm-nm", "llvm-objcopy") if not os.path.isfile(os.path.join(bindir, n + x))]
+        if missing:
+            seen.append("%s: no %s" % (bindir, ", ".join(missing)))
+            continue
+        clang = os.path.join(bindir, "clang" + x)
+        try:
+            line = (subprocess.run([clang, "--version"], capture_output=True, text=True).stdout.splitlines() or [""])[0]
+            lld = subprocess.run([os.path.join(bindir, "ld.lld" + x), "--version"], capture_output=True, text=True).stdout.strip()
+        except OSError as e:
+            seen.append("%s: %s" % (bindir, e))
+            continue
+        if LLVM_VERSION not in line or LLVM_VERSION not in lld:
+            seen.append("%s: clang says %r, ld.lld %r" % (bindir, line, lld))
+            continue
+        return {"config": None, "bindir": bindir, "clang": clang, "version": line, "builtins": None}
+    raise BuildError("llvm", "LLVM %s was not found (%s).\n%s" % (LLVM_VERSION, "; ".join(seen) or "no folder given",
+                                                                   "The builder's own folder has it in llvm\\bin: unpack the "
+                                                                   "whole zip again." if os.name == "nt" else LLVM_HELP))
 
 
 def cpu_count():
@@ -307,8 +381,12 @@ def llvm_candidates(given):
     return out
 
 
-def find_llvm(given):
-    """{config, bindir, clang, version line, builtins} for LLVM 19.1.7, or BuildError("llvm") with what was found and how to get it"""
+def find_llvm(given, need_builtins=True):
+    """{config, bindir, clang, version line, builtins} for LLVM 19.1.7, or BuildError("llvm") with what was found and how to get it.
+    need_builtins False: a toolchain folder with its own compiler-rt builtins (0.2, llvm-rt/) makes them unneeded here"""
+    if os.name == "nt" or (given and not any(os.path.isfile(c) and os.path.basename(c).startswith("llvm-config")
+                                             for c in llvm_candidates(given))):
+        return find_llvm_bin(given)
     seen = []
     for config in llvm_candidates(given):
         if not os.path.isfile(config):
@@ -332,7 +410,7 @@ def find_llvm(given):
             continue
         res = subprocess.run([clang, "--print-resource-dir"], capture_output=True, text=True).stdout.strip()
         builtins = os.path.join(res, "lib", "linux", "libclang_rt.builtins-x86_64.a")
-        if not os.path.isfile(builtins):
+        if need_builtins and not os.path.isfile(builtins):
             other = os.path.join(res, "lib", "x86_64-unknown-linux-gnu", "libclang_rt.builtins.a")
             hint = (" (this LLVM has it as %s: make the name PS5_Vulkan's link recipe reads with: mkdir -p %s && ln -s %s %s)"
                     % (other, os.path.dirname(builtins), other, builtins)) if os.path.isfile(other) else \
@@ -352,6 +430,7 @@ def tools(toolchain):
         return {"sdk": os.path.join(t, "sdk"), "ps5_vulkan": os.path.join(t, "ps5_vulkan"),
                 "radv": os.path.join(t, "radv", "lib", "libvulkan_radeon.ps5.a"), "cpm": os.path.join(t, "cpm"),
                 "dav1d": os.path.join(t, "dav1d"), "dav1d_include": os.path.join(t, "dav1d", "include-src"), "bundle": t,
+                "recipe": os.path.join(t, "ps5_recipe.json") if os.path.isfile(os.path.join(t, "ps5_recipe.json")) else None,
                 "prepare": os.path.join(t, "prepare")}
     above = toolchain_ps5._above
     return {"sdk": os.environ.get("PS5_PAYLOAD_SDK") or above("ps5-stack", "PS5_VulkanTemplate", ".deps", "native", "ps5-payload-sdk"),
@@ -383,12 +462,14 @@ def check_bundle(t):
 def tools_env(t, llvm, work=None):
     """The tools' environment: PATH with LLVM 19.1.7 first, the SDK's wrappers pinned to it (LLVM_CONFIG: they take the newest
     llvm-config-NN on PATH otherwise), the console's tools; nothing of a developer's RX_/HOS_/LONGSHOT_ switches"""
-    env = {k: os.environ[k] for k in ("HOME", "USER", "TMPDIR", "SYSTEMROOT", "TEMP", "TMP") if k in os.environ}
+    env = {k: os.environ[k] for k in ("HOME", "USER", "TMPDIR", "SYSTEMROOT", "TEMP", "TMP") + WINDOWS_ENV if k in os.environ}
     env.update(LANG="C.UTF-8", PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8",
-               PATH=llvm["bindir"] + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"), LLVM_CONFIG=llvm["config"],
+               PATH=llvm["bindir"] + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"), LLVM_CONFIG=llvm["config"] or "",
                PS5_CLANG=llvm["clang"],
                EMSDK=os.path.join(work or ROOT, "no-emsdk"),   # (a64-kit's toolchain.find looks in ~/emsdk first: never here)
                RX_TARGET="ps5")
+    if t.get("recipe"):   # (0.2: no bash, the LLVM tools run with the recipe's arguments: nx2/toolchain_ps5.py direct mode)
+        env.update(PS5_RECIPE=t["recipe"], PS5_LLVM_BIN=llvm["bindir"])
     for key, var in (("sdk", "PS5_PAYLOAD_SDK"), ("ps5_vulkan", "PS5_VULKAN"), ("radv", "RADV_ARCHIVE"), ("cpm", "RX_CPM"),
                      ("dav1d", "HOOKSHOT_PS5_DAV1D"), ("dav1d_include", "HOOKSHOT_PS5_DAV1D_INCLUDE")):
         if t.get(key):
@@ -398,6 +479,20 @@ def tools_env(t, llvm, work=None):
 
 # ---- the shaders' preparation on the PC (step 7) ----
 
+def checkout_tree(rel):
+    """The git tree of a folder of this checkout, "" when it cannot be said: a player's app folder is a git archive, and a
+    player's PC may have no git at all (Windows' rarely has: running it raised FileNotFoundError and stopped the build)"""
+    try:
+        r = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD:" + rel], capture_output=True, text=True)
+    except OSError:
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+# (the host and the renderer, copied into the run's folder beside the files they read; Windows' driver stays in the tool's folder)
+PREP_PROGRAMS = ("longshot.exe", "longshot_vk.dll") if os.name == "nt" else ("longshot", "longshot_vk.so")
+
+
 def prepare_tool(t):
     """The toolchain's shader preparation (prepare/, make_prepare_tool.py): its files as its prepare.json says, this checkout's
     translator (the same shader stamp: else its cache is of no use to this eboot) and the console's driver (the same build ID)"""
@@ -406,10 +501,13 @@ def prepare_tool(t):
     if not d or not os.path.isfile(path):
         raise BuildError("prepare-tool", "the toolchain has no shader preparation for the PC (its prepare/ folder): without it the console "
                          "compiles the game's shaders as you play. Unpack this release's toolchain, or build with --no-prepare")
-    if not sys.platform.startswith("linux"):
-        raise BuildError("prepare-platform", "the toolchain's shader preparation runs on Linux (x86-64): build with --no-prepare (the "
-                         "console then compiles the shaders as you play) until the Windows builder has its own")
     info = json.load(open(path))
+    # (the tool is made for one system: linux-x64, or windows-x64 since 0.3, make_prepare_tool.py --system)
+    here = "windows-x64" if os.name == "nt" else "linux-x64" if sys.platform.startswith("linux") else sys.platform
+    if info.get("system", "linux-x64") != here:
+        raise BuildError("prepare-platform", "the toolchain's shader preparation runs on %s, not on this PC (%s): build with --no-prepare "
+                         "(the console then compiles the shaders as you play), or take the toolchain made for this system"
+                         % (info.get("system", "linux-x64"), here))
     bad = []
     for rel, want in info.get("files", {}).items():
         p = os.path.join(d, *rel.split("/"))
@@ -435,8 +533,12 @@ def prepare_env(tool, run, cache, workers):
     console build's defaults a PC build lacks, the toolchain's driver and libraries, nothing of the player's own Vulkan layers
     or of a developer's switches"""
     tool, run, cache = os.path.abspath(tool), os.path.abspath(run), os.path.abspath(cache)   # (the run's folder is its own)
-    env = {k: os.environ[k] for k in ("HOME", "USER", "TMPDIR") if k in os.environ}
-    env.update(LANG="C.UTF-8", PATH="/usr/bin:/bin")
+    env = {k: os.environ[k] for k in ("HOME", "USER", "TMPDIR", "SYSTEMROOT", "TEMP", "TMP") + WINDOWS_ENV if k in os.environ}
+    if os.name == "nt":   # (windows: the system's own folders only; the tool's DLLs are beside its exe)
+        root = os.environ.get("SYSTEMROOT", r"C:\Windows")
+        env.update(PATH=os.pathsep.join((os.path.join(root, "System32"), root)))
+    else:
+        env.update(LANG="C.UTF-8", PATH="/usr/bin:/bin")
     with open(os.path.join(DATA, "hookshot_env.txt"), encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -447,15 +549,95 @@ def prepare_env(tool, run, cache, workers):
                 continue
             env[k] = v
     env.update(PREP_CONSOLE_DEFAULTS)
+    if os.name == "nt":   # (windows: the driver opened directly, no loader: gpu/vk/vk_main.cpp GRAPNEL_VK_ICD)
+        env["GRAPNEL_VK_ICD"] = os.path.join(tool, "vulkan_radeon.dll")
+    else:
+        env["LD_LIBRARY_PATH"] = os.path.join(tool, "lib")
     env.update({
-        "LD_LIBRARY_PATH": os.path.join(tool, "lib"), "VK_DRIVER_FILES": os.path.join(tool, "icd.json"),
+        "VK_DRIVER_FILES": os.path.join(tool, "icd.json"),
         "VK_ICD_FILENAMES": os.path.join(tool, "icd.json"), "VK_LOADER_LAYERS_DISABLE": "~implicit~",
         "XDG_CACHE_HOME": os.path.join(run, "xdg-cache"),
         "MESA_SHADER_CACHE_DIR": cache, "MESA_DISK_CACHE_DATABASE": "1", "MESA_DISK_CACHE_DATABASE_EXCLUSIVE": "1",
         "HOS_HEADLESS": "1", "HOS_DISCORD": "0", "HOS_CRASH_WATCH": "0", "HOOKSHOT_NO_UPDATE_CHECK": "1",
         "LONGSHOT_NO_UPDATE_CHECK": "1", "RX_VK_SKIP_FILE": os.path.join(run, "skip.txt"),
         "RX_VK_CONSOLE_PREPARE_RUN": "1", "HOOKSHOT_PS5_PREPARE_WORKERS": str(workers)})
+    if os.name == "nt":
+        # (windows: the folders the driver and the renderer open by their narrow names, relative to the run's folder, which is
+        # their working folder: plain ASCII whatever the player's name. Under Wine an absolute "C:\users\Prénom Nom\..." came to
+        # the driver one byte short, "...\radv-shader-cach", and the cache went beside the one the builder collects)
+        try:
+            env["MESA_SHADER_CACHE_DIR"] = os.path.relpath(cache, run)
+            env["RX_VK_SKIP_FILE"] = os.path.relpath(env["RX_VK_SKIP_FILE"], run)
+        except ValueError:   # (another drive: as they are)
+            pass
     return env
+
+
+# (the preparation's three steps and their share of its time on a PC, measured: a whole run under Wine on 14 threads, 187 s,
+# 342 s and 827 s; the renderer's own "% of the work" counts in its units, which made the start's estimate far too long: 1 h 18
+# left at 313 s of a 1,359 s run)
+PREP_START = re.compile(r"\((\d+) mesh,.*?; (\d+) compute\), \d+ pipeline records in (\d+) programs.*?from item (\d+)")
+PREP_STEP_SHARE = (0.138, 0.252, 0.610)
+
+
+class PrepEstimate:
+    """The time left of a preparation run from its own pace step by step: the first step's items come at an even rate, so its
+    length is known early and the whole run is that length over its share; the second step's items end in no useful order,
+    so the estimate made at its start holds until it is over; in the third step the renderer's own figure is good (its
+    items end faster than they begin), and the rest at the step's item rate bounds it. A run that starts past the first item
+    (a run again) is left to the renderer's own figures"""
+
+    def __init__(self):
+        self.counts = None
+        self.starts = {}
+
+    def start_line(self, line):
+        m = PREP_START.search(line)
+        if m:
+            n1, n2, n3, first = (int(x) for x in m.groups())
+            self.counts = (n1, n2, n3) if first == 0 else None
+
+    def at(self, seconds, step, item, theirs=None):
+        """(fraction done, seconds left) for a progress line (theirs: the renderer's seconds left), or None when there is
+        nothing to go on"""
+        if not self.counts or step not in (1, 2, 3) or seconds <= 0:
+            return None
+        # (a step began after the previous step's last line: lines come every 10 s, so at most that much later)
+        self.starts.setdefault(step, getattr(self, "seen", seconds))
+        self.seen = seconds
+        n1, n2, n3 = self.counts
+        if step == 1:
+            g = min(1.0, item / max(1, n1))
+            if g < 0.05:
+                return None
+            total = seconds / g / PREP_STEP_SHARE[0]
+        elif step == 2:
+            total = self.starts[2] / PREP_STEP_SHARE[0]
+        else:
+            g = min(1.0, max(0.0, (item - n1 - n2) / max(1, n3)))
+            begun = self.starts[3]
+            if g < 0.05:
+                total = begun / (PREP_STEP_SHARE[0] + PREP_STEP_SHARE[1])
+            else:
+                total = begun + (seconds - begun) / g
+            if theirs is not None:
+                total = min(total, seconds + theirs)
+        total = max(total, seconds + 1)
+        return seconds / total, total - seconds
+
+
+def read_left(text):
+    """The renderer's time left ("< 1 min", "N min", "H h MM") in seconds; None if it says otherwise"""
+    m = re.fullmatch(r"\s*(?:(<) 1 min|(\d+) min|(\d+) h (\d+))\s*", text or "")
+    if not m:
+        return None
+    return 30 if m.group(1) else int(m.group(2)) * 60 if m.group(2) else (int(m.group(3)) * 60 + int(m.group(4))) * 60
+
+
+def say_left(seconds):
+    """The renderer's way of saying a time left: "< 1 min", "N min", "H h MM" """
+    m = int(seconds // 60)
+    return "< 1 min" if m < 1 else "%d min" % m if m < 60 else "%d h %02d" % (m // 60, m % 60)
 
 
 def mesa_db_facts(cache):
@@ -489,6 +671,31 @@ def mesa_db_facts(cache):
         facts["entries"] += n
         facts["bytes"] += size + max(0, os.path.getsize(idx) if os.path.isfile(idx) else 0)
     return facts
+
+
+def mesa_db_digest(cache):
+    """What the console's driver will find in the cache: each key once (its last entry, as the index has it) with its blob,
+    in key order, hashed; the parts the entries are in left out (the driver looks in every part, and which part takes an
+    entry depends on the workers' order). (keys, the digest's first 16 hex digits): the same on every PC that prepared the
+    same game with the same tool, Windows or Linux"""
+    root = os.path.join(cache, "mesa_shader_cache_db")
+    seen = {}
+    if os.path.isdir(root):
+        for part in sorted(os.listdir(root)):
+            db = os.path.join(root, part, "mesa_cache.db")
+            if not os.path.isfile(db):
+                continue
+            with open(db, "rb") as f:
+                d = f.read()
+            at = 20
+            while at + 40 <= len(d):
+                size, = struct.unpack_from("<I", d, at + 36)
+                seen[d[at:at + 32]] = hashlib.sha256(d[at + 40:at + 40 + size]).digest()
+                at += 40 + size
+    h = hashlib.sha256()
+    for k in sorted(seen):
+        h.update(k + seen[k])
+    return len(seen), h.hexdigest()[:16]
 
 
 def read_progress(path):
@@ -682,6 +889,26 @@ def tree_sha1(folder):
     return h.hexdigest()
 
 
+def llvm_stamp(llvm):
+    """(grapnel) Which LLVM compiles: clang's version line and its bin folder's files by name and size. Two builds of one LLVM
+    version can compile differently (llvm-mingw's, built on libc++, made another vk_texture.o than every libstdc++-built clang:
+    notes-agents/constructeur-windows.md), and nx2/build.py's object keys name the flags and sources, not the compiler"""
+    b = llvm["bindir"]
+    files = sorted("%s %d" % (n, os.path.getsize(os.path.join(b, n))) for n in os.listdir(b) if os.path.isfile(os.path.join(b, n)))
+    return "%s\n%s\n" % (llvm["version"], "\n".join(files))
+
+
+def objects_from_another_llvm(work, mark, now):
+    """A work folder whose objects another LLVM compiled, or a builder before the mark (which cannot say): its objects go"""
+    if not os.path.isdir(os.path.join(work, "sa", "build-ps5")):
+        return False
+    try:
+        with open(mark, encoding="utf-8") as f:
+            return f.read() != now
+    except OSError:
+        return True
+
+
 class CompileProgress:
     """The compile's progress from nx2/build.py's lines, by each file's share of the compile time (make_game.py's measure: the hot
     files 23.5 s per MB of C, the other lifted files 3.4 s per MB + 1, the rest ~1.3 s each), not by the count of files"""
@@ -734,15 +961,27 @@ class Builder:
 
     # ---- running the port's tools ----
 
-    def _run(self, cmd, log, what, on_line=None, env=None, cwd=None):
-        """cmd's output to the events and to log as it comes; a failure is a BuildError with its last lines"""
+    def _run(self, cmd, log, what, on_line=None, env=None, cwd=None, idle=None):
+        """cmd's output to the events and to log as it comes; a failure is a BuildError with its last lines. idle: seconds
+        without a line after which cmd is ended, its exit then SILENT_EXIT"""
         os.makedirs(os.path.dirname(log), exist_ok=True)
         tail = []
         with open(log, "a", encoding="utf-8") as f:
             f.write("$ %s\n" % " ".join(cmd))
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
                                  env=env or self.env, cwd=cwd or ROOT)
+            heard, silent = [time.time()], []
+            if idle:
+                def watch():
+                    while p.poll() is None:
+                        time.sleep(5)
+                        if time.time() - heard[0] > idle:
+                            silent.append(True)
+                            p.kill()   # (this run's own process; on Windows the build's job holds it too)
+                            return
+                threading.Thread(target=watch, daemon=True).start()
             for line in p.stdout:
+                heard[0] = time.time()
                 line = line.rstrip("\n")
                 f.write(line + "\n")
                 tail = (tail + [line])[-30:]
@@ -750,6 +989,9 @@ class Builder:
                 if on_line:
                     on_line(line)
             rc = p.wait()
+            if silent:
+                f.write("silent for %d s: ended\n" % idle)
+                rc = SILENT_EXIT
             f.write("exit %d\n" % rc)
         if rc:
             raise BuildError("tool-failed", "%s failed (exit %d)" % (what, rc), "\n".join(tail[-12:]), log)
@@ -770,9 +1012,9 @@ class Builder:
     def check(self):
         """LLVM, the console toolchain, Python's packages, ps5-native-tool, the ZBIC program, a compile for the console"""
         self.ev.info("Grapnel builder %s, checkout %s" % (VERSION, describe()))
-        self.llvm = find_llvm(self.o.llvm)
-        self.ev.info("ok: LLVM %s (%s)" % (self.llvm["version"], self.llvm["bindir"]))
         self.t = t = tools(self.o.toolchain)
+        self.llvm = find_llvm(self.o.llvm, need_builtins=not t.get("recipe"))
+        self.ev.info("ok: LLVM %s (%s)" % (self.llvm["version"], self.llvm["bindir"]))
         self.tool_notes = {"llvm": self.llvm["version"], "toolchain": None}
         if t["bundle"]:
             info = check_bundle(t)
@@ -783,8 +1025,9 @@ class Builder:
         missing = [k for k in ("sdk", "ps5_vulkan", "radv", "cpm", "dav1d", "dav1d_include") if not t.get(k) or not os.path.exists(t[k])]
         if missing:
             raise BuildError("toolchain", "the console toolchain is missing %s: give the unpacked grapnel-toolchain folder" % ", ".join(missing))
-        for f in (os.path.join(t["sdk"], "bin", "prospero-clang"), os.path.join(t["ps5_vulkan"], "tools", "radv-link.sh"),
-                  os.path.join(t["ps5_vulkan"], "runtime", "libc.prx"), os.path.join(t["dav1d"], "src", "libdav1d.a")) + \
+        for f in ((t["recipe"],) if t.get("recipe") else (os.path.join(t["sdk"], "bin", "prospero-clang"),
+                                                          os.path.join(t["ps5_vulkan"], "tools", "radv-link.sh"))) + \
+                 (os.path.join(t["ps5_vulkan"], "runtime", "libc.prx"), os.path.join(t["dav1d"], "src", "libdav1d.a")) + \
                 tuple(os.path.join(t["cpm"], d) for d in ("vulkanheaders", "spirv-headers", "vulkanmemoryallocator")):
             if not os.path.exists(f):
                 raise BuildError("toolchain", "the console toolchain has no %s" % f)
@@ -795,7 +1038,7 @@ class Builder:
             self.tool_notes["prepare"] = "%s %s (%s), shader stamp %s, driver %s" % (info["name"], info["version"], info["made"],
                                                                                     info["shader_stamp"], info["driver_build_id"][:12])
             self.ev.info("ok: the shader preparation for the PC, %s" % self.tool_notes["prepare"])
-            tree = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD:gpu/vk"], capture_output=True, text=True).stdout.strip()
+            tree = checkout_tree("gpu/vk")
             if info.get("gpu_vk_tree") and tree and tree != info["gpu_vk_tree"]:
                 self.ev.info("note: the preparation's renderer is of another revision than this checkout's (the same translator): "
                              "a pipeline this checkout builds otherwise is compiled on the console when first drawn")
@@ -822,24 +1065,33 @@ class Builder:
             c = os.path.join(tmp, "check.c")
             with open(c, "w") as f:
                 f.write("#include <stdint.h>\n#include <string.h>\nuint64_t check(const char *s) { return strlen(s) + 1; }\n")
-            r = subprocess.run([os.path.join(t["sdk"], "bin", "prospero-clang"), "-march=x86-64-v3", "-O1", "-c", c, "-o",
-                                os.path.join(tmp, "check.o"), "-v"], capture_output=True, text=True, env=self.env)
+            args = ["-march=x86-64-v3", "-O1", "-c", c, "-o", os.path.join(tmp, "check.o"), "-v"]
+            if t.get("recipe"):   # (the build's own way: nx2/toolchain_ps5.py's direct mode reads these two from the environment)
+                os.environ.update(PS5_RECIPE=self.env["PS5_RECIPE"], PS5_LLVM_BIN=self.env["PS5_LLVM_BIN"])
+                cmd = toolchain_ps5.command(toolchain_ps5.find("clang"), args)
+            else:
+                cmd = [os.path.join(t["sdk"], "bin", "prospero-clang")] + args
+            r = subprocess.run(cmd, capture_output=True, text=True, env=self.env)
             if r.returncode:
                 raise BuildError("toolchain", "prospero-clang does not compile for the console", (r.stdout + r.stderr)[-1500:])
             if LLVM_VERSION not in r.stderr:
                 raise BuildError("llvm", "prospero-clang runs another clang than LLVM %s" % LLVM_VERSION, "\n".join(r.stderr.splitlines()[:3]))
-        self.ev.info("ok: prospero-clang compiles for x86_64-sie-ps5 with clang %s" % LLVM_VERSION)
+        self.ev.info("ok: %s compiles for x86_64-sie-ps5 with clang %s" % ("clang, the recipe's arguments" if t.get("recipe") else
+                                                                          "prospero-clang", LLVM_VERSION))
         return self.tool_notes
 
     def _native_tool(self):
         """PS5_Vulkan's ps5-native-tool runs here; if not (an older C library), it is built again from the folder's sources with this
         LLVM and the system's zlib"""
-        tool = os.path.join(self.t["ps5_vulkan"], "build", "host", "ps5-native-tool")
+        tool = os.path.join(self.t["ps5_vulkan"], "build", "host", "ps5-native-tool" + (".exe" if os.name == "nt" else ""))
         r = subprocess.run([tool], capture_output=True, text=True) if os.path.isfile(tool) else None
         if r is not None and "ps5-native-tool" in r.stdout + r.stderr:
             self.ev.info("ok: ps5-native-tool runs")
             return tool
         native = os.path.join(self.t["ps5_vulkan"], "tooling", "native")
+        if os.name == "nt":
+            raise BuildError("toolchain", "ps5-native-tool.exe does not run (%s): unpack the builder's zip again"
+                             % ((r.stderr.strip()[-200:] if r else "missing")))
         self.ev.info("ps5-native-tool does not run here (%s): building it from %s" % ((r.stderr.strip()[-200:] if r else "missing"), native))
         os.makedirs(os.path.dirname(tool), exist_ok=True)
         self._run([os.path.join(self.llvm["bindir"], "clang++"), "-std=c++20", "-O2", "-static-libstdc++", "-static-libgcc"] +
@@ -999,6 +1251,14 @@ class Builder:
         env = dict(self.env, OOT_WORK=work, HOOKSHOT_PS5_FLEXIBLE_MB=str(FLEXIBLE_MB))
         if self.o.memory:
             env["LONGSHOT_MEM_LIMIT_GB"] = str(self.o.memory)
+        llvm_mark, llvm_now = os.path.join(work, "sa", "grapnel-llvm.txt"), llvm_stamp(self.llvm)
+        if objects_from_another_llvm(work, llvm_mark, llvm_now):
+            self.ev.info("the objects here were compiled by another LLVM (or a builder that did not say which): compiled again")
+            for d in (os.path.join(work, "sa", "build-ps5"), os.path.join(work, "objcache")):
+                shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(os.path.dirname(llvm_mark), exist_ok=True)
+        with open(llvm_mark, "w", encoding="utf-8") as f:   # (written before: a build stopped halfway keeps its objects for the next)
+            f.write(llvm_now)
         self.ev.progress(0.0, "compiling")
         self._run([self.o.python, "-I", "-B", "-u", os.path.join(NX2, "build.py"), "--standalone", "--jobs", str(self.o.jobs)],
                   os.path.join(self.logs, "3-compile.log"), "the compile and link", on_line, env=env)
@@ -1227,13 +1487,16 @@ class Builder:
         with open(kmark, "w") as f:
             f.write(key)
         # (the run folder: the host and the renderer beside the files they read under the PC build's names (longshot_*))
-        for n in ("longshot", "longshot_vk.so"):
+        for n in PREP_PROGRAMS:
             shutil.copy2(os.path.join(tool, n), os.path.join(run, n))
         for src, n in ((sf["census_path"], "longshot_shaders.bin"), (sf["states_path"], "longshot_pipeline_states_shipped.bin"),
                        (os.path.join(DATA, "skip.txt"), "skip.txt")):
             dst = os.path.join(run, n)
             if os.path.lexists(dst):
                 os.remove(dst)
+            if os.name == "nt":   # (windows: a copy; a symbolic link asks for a privilege, and Wine's made nothing at all)
+                shutil.copyfile(src, dst)
+                continue
             try:
                 os.symlink(src, dst)
             except OSError:
@@ -1286,7 +1549,8 @@ class Builder:
         # screen reads it when no MESA_SHADER_CACHE_DIR names another cache folder: gpu/vk/vk_draw.cpp prep_progress_path)
         shutil.copytree(cache, dst_cache, ignore=shutil.ignore_patterns("*.tmp", "index"))
         shutil.copyfile(progress, os.path.join(self.data, progress_name))
-        self.prepared = {"entries": facts["entries"], "parts": facts["parts"], "bytes": facts["bytes"], "workers": workers,
+        keys, digest = mesa_db_digest(cache)
+        self.prepared = {"entries": facts["entries"], "keys": keys, "digest": digest, "parts": facts["parts"], "bytes": facts["bytes"], "workers": workers,
                          "translator": made.get("translator"), "driver": made.get("driver"), "items": int(made.get("total", 0)),
                          "left_to_play": made_skip, "seconds": made_seconds, "check_seconds": float(made.get("seconds", 0)),
                          "second_pass_new": second, "made_before": before.get("finished") == "1"}
@@ -1295,34 +1559,42 @@ class Builder:
         with open(checked, "w") as f:
             f.write(key)
         self.ev.info("the driver's shader cache: %d entries in %d parts, %.0f MB, made in %.0f s on %d cores; the second pass found "
-                     "everything%s" % (facts["entries"], facts["parts"], facts["bytes"] / 1e6, self.prepared["seconds"], workers,
-                                       "" if not second[0] else " (after adding %d)" % second[0]))
+                     "everything%s; %d keys, content %s" % (facts["entries"], facts["parts"], facts["bytes"] / 1e6, self.prepared["seconds"],
+                                                         workers, "" if not second[0] else " (after adding %d)" % second[0], keys, digest))
         return self.prepared
 
     def _prepare_runs(self, run, env, log, what, lo, hi):
         """The preparation's runs until it finishes: a run that stops short of memory (13) or on a compile that never ends (14)
         is run again, and goes on where it stopped; the progress from its lines every 10 s"""
         last = {}
+        estimate = PrepEstimate()
 
         def on_line(line):
+            estimate.start_line(line)
             m = PREP_PROGRESS.search(line)
             if m:
                 pct, left = int(m.group(6)), m.group(7)
+                mine = estimate.at(int(m.group(1)), int(m.group(2) or 0), int(m.group(4)), read_left(left))
+                if mine:   # (the builder's own estimate, by the steps' measured shares: see PrepEstimate)
+                    pct, left = int(100 * mine[0]), say_left(mine[1])
                 last.update(free=int(m.group(9)), pct=pct)
                 self.ev.progress(lo + (hi - lo) * pct / 100, "%s: %s, %d%% (%s left; %s MiB free)" % (what, m.group(2) and "step %s of 3"
                                                                                                       % m.group(2), pct, left, m.group(9)))
         for attempt in range(PREP_TRIES):
             try:
-                self._run([os.path.join(run, "longshot"), "--prepare-shaders"], log, what, on_line=on_line, env=env, cwd=run)
+                self._run([os.path.join(run, PREP_PROGRAMS[0]), "--prepare-shaders"], log, what, on_line=on_line, env=env, cwd=run,
+                          idle=PREP_SILENT_S)
                 return
             except BuildError as e:
                 code = int(re.search(r"exit (-?\d+)", e.message).group(1)) if re.search(r"exit (-?\d+)", e.message) else -1
-                if code not in (13, 14) or attempt == PREP_TRIES - 1:
+                if (code not in (13, 14, SILENT_EXIT) and not crashed(code)) or attempt == PREP_TRIES - 1:
                     raise BuildError("prepare-failed", "%s on this PC ended (exit %d)%s" % (
                         what, code, ": short of memory again and again; free some memory or use --prepare-workers" if code == 13 else ""),
                         e.details, log)
                 self.ev.info("%s stopped (%s): again, from where it stopped" % (
-                    what, "the PC's memory ran short" if code == 13 else "a compile did not end"))
+                    what, {13: "the PC's memory ran short", 14: "a compile did not end"}.get(code, "it said nothing for %d minutes"
+                                                                                              % (PREP_SILENT_S // 60))
+                    if not crashed(code) else "it crashed, code %#x" % (code & 0xFFFFFFFF)))
                 time.sleep(5)
 
     # ---- 8. the notes ----
@@ -1379,6 +1651,7 @@ class Builder:
     # ---- all of it ----
 
     def run(self):
+        quiet_crashes()
         self.check()
         check_nup(self.o.nup)
         free = self._need_work()

@@ -1,0 +1,30 @@
+// Grapnel.exe's resources: the icon (style A, brass), the manifest, the version information
+#include <winver.h>
+#include <winuser.h>
+1 ICON "grapnel.ico"
+1 RT_MANIFEST "launcher.manifest"
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 0,2,0,0
+PRODUCTVERSION 0,2,0,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "Grapnel (GPL-3.0)"
+      VALUE "FileDescription", "Grapnel builder: the PS5 title from your own game file"
+      VALUE "FileVersion", "0.2"
+      VALUE "InternalName", "Grapnel"
+      VALUE "LegalCopyright", "GPL-3.0-or-later"
+      VALUE "OriginalFilename", "Grapnel.exe"
+      VALUE "ProductName", "Grapnel builder"
+      VALUE "ProductVersion", "0.2"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

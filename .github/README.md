@@ -49,27 +49,54 @@ Grapnel is published before it is finished, so that others can help.
 - A **jailbroken PS5** (tried on firmware 12.60 only) with **kstuff**, an **ELF loader listening on port 9021** (elfldr),
   and **[ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus) 1.7beta3 or newer** (1.7beta11 tried), which lets the
   title see `/data` and registers it.
-- A way to copy files to the console (an FTP server, for example), over your local network.
+- Your local network between the PC and the console: the builder's window can send the title itself (step 6, over FTP), or
+  copy it yourself (an FTP server, for example).
 - **Your own copy of the game**, dumped from your own console, as a `.nup` file (game version 131072). About 26 GB.
-- **A PC with Linux on x86-64** for the builder (Windows is planned): 8 GB of memory at the least (16 GB or more is
-  faster), about 10 GB of free disk space besides the game file, **LLVM 19.1.7**, git and Python 3.12 or newer.
-- **The console toolchain**, `grapnel-toolchain-0.2-linux-x64.tar.xz`, from this repository's
-  [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) page (the console's SDK, linker parts, driver and the
-  shaders' preparation; no game file in it).
+- **A PC with Windows 10 or 11 (64-bit), or Linux on x86-64**, for the builder, with a processor that has AVX2 (x86-64-v3):
+  8 GB of memory at the least (16 GB is much faster), about 12 GB of free disk space besides the game file.
+  - **Windows:** `Grapnel-Builder-0.2.0-windows-x64.zip` from this repository's
+    [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) page: a folder with everything in it (its LLVM, Python,
+    the console toolchain), nothing to install.
+  - **Linux:** **LLVM 19.1.7**, git and Python 3.12 or newer, and **the console toolchain**,
+    `grapnel-toolchain-0.3-linux-x64.tar.xz`, from the same page (the console's SDK, linker parts, driver, the shaders'
+    preparation and the FTP server step 6 can send; no game file in it).
 
-### Build it with the builder
+### Build it on Windows
 
-The builder (`scripts/grapnel-builder/`) turns your game file into the console's title folder and data folder. Its first
-version is a Linux command-line tool, modelled on the builder of
+1. Unpack the whole `Grapnel-Builder-0.2.0-windows-x64.zip` (right click, "Extract All...") into a folder of yours with a
+   short path, `C:\Grapnel-Builder` for instance. Nothing to install, no administrator rights.
+2. Start `Grapnel.exe`. It is not signed: if Windows says "Windows protected your PC", click **More info**, then **Run
+   anyway**. An antivirus may scan or block the builder's programs (`clang.exe`, `ld.lld.exe`, `zbic_unpack.exe`,
+   `ps5-native-tool.exe`), which compile the game for the console: if it removes one, step 3 says the tools are incomplete;
+   restore it or exclude the folder, and unpack again.
+3. Follow its six steps: **1** your game's `.nup` (checked at once), **2** the output folder (an earlier build there or in
+   another folder is offered back), **3** the check of your PC (by itself), **4** the game's build, **5** the shaders,
+   prepared on your PC as on Linux, **6** sending it to the console (optional).
+4. Step 6 takes the console's IP address. It sends over FTP: the console's FTP server if one answers (port 2121), else
+   [ftpsrv](https://github.com/ps5-payload-dev/ftpsrv) (GPL-3.0), which it sends to the console's ELF loader (port 9021).
+   It first copies your saves to the PC (`console-saves\` in the output folder), asks before it replaces anything, touches
+   only `/data/homebrew/GRPN00001` and `/data/grapnel`, sends the game file only when the console does not have it, carries
+   on where a cut send stopped, and reads the sizes and the eboot's CRC32 back. ShadowMountPlus then registers the title.
+
+On a Ryzen 5 3600X with 16 GB (a player's PC, Windows 11), two builds: the translation 155 and 266 s, the compile 1,980 and
+2,066 s (33 and 34 min), the shaders' preparation 1,318 and 2,839 s (22 and 47 min, its check included). The `eboot.bin` and the shader cache it made are the Linux builder's, byte
+for byte: the same CRC32 for the eboot, the same 57,210 keys and contents for the cache. `Grapnel-console.cmd` runs the same
+build without the window. The window's "Copy the report" gives what to send with a problem.
+
+### Build it on Linux
+
+The builder (`scripts/grapnel-builder/`) turns your game file into the console's title folder and data folder. On Linux
+it is a command-line tool (the window of the Windows package runs there too: `scripts/grapnel-builder/grapnel_gui.py`),
+modelled on the builder of
 [heydemoura/PS5_Longshot](https://github.com/heydemoura/PS5_Longshot); its own guide,
 [scripts/grapnel-builder/INSTALL.md](../scripts/grapnel-builder/INSTALL.md), has every step: install LLVM 19.1.7, git and
 the builder's Python environment (`~/grapnel-venv`, from `scripts/grapnel-builder/requirements.txt`), clone this repository,
 unpack the toolchain, then, in the repository's folder:
 
 ```bash
-~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.2-linux-x64
+~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3-linux-x64
 ~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --nup "$HOME/<your game>.nup" --out ~/grapnel-out \
-    --toolchain ~/grapnel-toolchain-0.2-linux-x64
+    --toolchain ~/grapnel-toolchain-0.3-linux-x64
 ```
 
 - `--check` needs no game: it looks at everything the build needs (its Python packages, LLVM 19.1.7, the console
@@ -80,9 +107,9 @@ unpack the toolchain, then, in the repository's folder:
   LLVM/clang 19.1.7 (the compiler every console test used: every player gets the same eboot), links and signs the title,
   and makes the controller's PlayStation icons from your game's own files.
 - It prepares the game's shaders on your PC: the console's own shader preparation, run by the toolchain's `prepare/` (no
-  game code: the console's renderer and a model of the console's driver built for Linux, so the console's cache keys) on
+  game code: the console's renderer and a model of the console's driver built for the PC, so the console's cache keys) on
   every core, as many compiles at once as the free memory allows; then it checks the cache (a second pass rebuilds everything
-  and finds it all) and puts it in the title folder (`radv-shader-cache/`). Linux x86-64 for now; `--no-prepare` leaves it
+  and finds it all) and puts it in the title folder (`radv-shader-cache/`). On Linux and Windows; `--no-prepare` leaves it
   out (the console then compiles in play).
 - It refuses another game or another version than 131072, and a build that would leave the console too little memory.
 - It takes about 45 minutes on a recent 8-core PC (the compile ~25, the shaders' preparation ~15), up to 2 hours and a half
@@ -95,6 +122,8 @@ unpack the toolchain, then, in the repository's folder:
   it to yourself.
 
 ### Install on the console
+
+The window's step 6 does steps 1 and 2 over FTP (see [Build it on Windows](#build-it-on-windows)); by hand:
 
 1. Copy `<output>/homebrew/GRPN00001/` (with its `radv-shader-cache/`) to **`/data/homebrew/GRPN00001/`**.
 2. Copy `<output>/data/grapnel/` to **`/data/grapnel/`**, and your game file into it, as it is, as
@@ -149,6 +178,11 @@ screen. Two optional extras:
 In the game, **touchpad + R1** opens and closes the Grapnel menu (Options stays the game's own pause). It shows the
 settings that work on the console, **Back to the Grapnel screen** (closes the game and starts Grapnel again on its launch
 screen) and **Quit**. In the menus the left stick moves like the D-pad.
+
+**The ocarina can be played into the DualSense's microphone** (player 1's), when the game's own microphone option is on;
+the menu also has Microphone, Microphone gain and Test microphone. The voice never leaves the console: nothing is sent or
+recorded, nothing is heard while the game does not listen, and the controller's mute button cuts it. Tried on firmware
+12.60; `HOOKSHOT_PS5_MIC=0` in `/data/grapnel/hookshot_env.txt` turns it off.
 
 ### Troubleshooting and reporting problems
 
@@ -240,27 +274,58 @@ Grapnel est publié avant d'être fini, pour que d'autres puissent aider.
 - Une **PS5 débridée** (essayée en firmware 12.60 seulement) avec **kstuff**, un **chargeur d'ELF qui écoute sur le port
   9021** (elfldr) et **[ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus) 1.7beta3 ou plus récent** (essayé :
   1.7beta11), qui rend `/data` visible au titre et l'enregistre.
-- Un moyen de copier des fichiers sur la console (un serveur FTP, par exemple), par votre réseau local.
+- Votre réseau local entre le PC et la console : la fenêtre du constructeur peut envoyer le titre elle-même (étape 6, par
+  FTP), ou vous le copiez vous-même (un serveur FTP, par exemple).
 - **Votre propre copie du jeu**, extraite de votre propre console, en fichier `.nup` (version 131072 du jeu). Environ 26 Go.
-- **Un PC sous Linux x86-64** pour le constructeur (Windows est prévu) : 8 Go de mémoire au moins (16 Go ou plus, c'est
-  plus rapide), environ 10 Go libres en plus du fichier du jeu, **LLVM 19.1.7**, git et Python 3.12 ou plus récent.
-- **La chaîne d'outils console**, `grapnel-toolchain-0.2-linux-x64.tar.xz`, sur la page
-  [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) de ce dépôt (le SDK, les pièces de lien et le pilote de la
-  console, et la préparation des shaders ; aucun fichier du jeu dedans).
+- **Un PC sous Windows 10 ou 11 (64 bits), ou sous Linux x86-64**, pour le constructeur, avec un processeur qui a l'AVX2
+  (x86-64-v3) : 8 Go de mémoire au moins (16 Go, c'est bien plus rapide), environ 12 Go libres en plus du fichier du jeu.
+  - **Windows :** `Grapnel-Builder-0.2.0-windows-x64.zip`, sur la page
+    [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) de ce dépôt : un dossier qui contient tout (son LLVM,
+    Python, la chaîne d'outils console), rien à installer.
+  - **Linux :** **LLVM 19.1.7**, git et Python 3.12 ou plus récent, et **la chaîne d'outils console**,
+    `grapnel-toolchain-0.3-linux-x64.tar.xz`, sur la même page (le SDK, les pièces de lien et le pilote de la console, la
+    préparation des shaders et le serveur FTP que l'étape 6 peut envoyer ; aucun fichier du jeu dedans).
 
-### Construire avec le constructeur
+### Construire sous Windows
+
+1. Décompressez tout `Grapnel-Builder-0.2.0-windows-x64.zip` (clic droit, « Extraire tout… ») dans un dossier à vous au
+   chemin court, par exemple `C:\Grapnel-Builder`. Rien à installer, pas de droits d'administrateur.
+2. Lancez `Grapnel.exe`. Il n'est pas signé : si Windows affiche « Windows a protégé votre ordinateur », cliquez sur
+   **Informations complémentaires**, puis **Exécuter quand même**. Un antivirus peut examiner ou bloquer les programmes du
+   constructeur (`clang.exe`, `ld.lld.exe`, `zbic_unpack.exe`, `ps5-native-tool.exe`), qui compilent le jeu pour la
+   console : s'il en retire un, l'étape 3 dit que les outils sont incomplets ; rétablissez-le ou excluez le dossier, puis
+   décompressez à nouveau.
+3. Suivez ses six étapes : **1** le `.nup` de votre jeu (contrôlé tout de suite), **2** le dossier de sortie (une
+   construction précédente, là ou dans un autre dossier, est proposée), **3** la vérification de votre PC (toute seule),
+   **4** la construction du jeu, **5** les shaders, préparés sur votre PC comme sous Linux, **6** l'envoi à la console
+   (facultatif).
+4. L'étape 6 demande l'adresse IP de la console. Elle envoie par FTP : le serveur FTP de la console s'il répond (port
+   2121), sinon [ftpsrv](https://github.com/ps5-payload-dev/ftpsrv) (GPL-3.0), qu'elle envoie au chargeur d'ELF de la
+   console (port 9021). Elle copie d'abord vos parties sur le PC (`console-saves\` dans le dossier de sortie), demande
+   avant de remplacer quoi que ce soit, ne touche que `/data/homebrew/GRPN00001` et `/data/grapnel`, n'envoie le fichier du
+   jeu que si la console ne l'a pas, reprend un envoi coupé là où il en était, et relit les tailles et le CRC32 de l'eboot.
+   ShadowMountPlus enregistre ensuite le titre.
+
+Sur un Ryzen 5 3600X avec 16 Go (le PC d'un joueur, Windows 11), deux constructions : la traduction 155 et 266 s, la
+compilation 1 980 et 2 066 s (33 et 34 min), la préparation des shaders 1 318 et 2 839 s (22 et 47 min, contrôle compris). L'`eboot.bin` et le cache des shaders faits là sont ceux du
+constructeur Linux, octet pour octet : le même CRC32 pour l'eboot, les mêmes 57 210 clés et contenus pour le cache.
+`Grapnel-console.cmd` fait la même construction sans la fenêtre. « Copier le rapport » donne ce qu'il faut envoyer en cas
+de problème.
+
+### Construire sous Linux
 
 Le constructeur (`scripts/grapnel-builder/`) fait, à partir de votre fichier du jeu, le dossier du titre et le dossier de
-données de la console. Sa première version est un outil en ligne de commande pour Linux, qui a pour modèle le constructeur
+données de la console. Sous Linux c'est un outil en ligne de commande (la fenêtre du paquet Windows y tourne aussi :
+`scripts/grapnel-builder/grapnel_gui.py`), qui a pour modèle le constructeur
 de [heydemoura/PS5_Longshot](https://github.com/heydemoura/PS5_Longshot) ; son guide,
 [scripts/grapnel-builder/INSTALL.fr.md](../scripts/grapnel-builder/INSTALL.fr.md), donne chaque étape : installer LLVM
 19.1.7, git et l'environnement Python du constructeur (`~/grapnel-venv`, depuis `scripts/grapnel-builder/requirements.txt`),
 cloner ce dépôt, décompresser la chaîne d'outils, puis, dans le dossier du dépôt :
 
 ```bash
-~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.2-linux-x64
+~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3-linux-x64
 ~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --nup "$HOME/<votre jeu>.nup" --out ~/grapnel-out \
-    --toolchain ~/grapnel-toolchain-0.2-linux-x64
+    --toolchain ~/grapnel-toolchain-0.3-linux-x64
 ```
 
 - `--check` n'a pas besoin du jeu : il vérifie tout ce dont la construction a besoin (ses paquets Python, LLVM 19.1.7, la
@@ -271,10 +336,10 @@ cloner ce dépôt, décompresser la chaîne d'outils, puis, dans le dossier du d
   19.1.7 (le compilateur de tous les essais sur la console : chaque joueur obtient le même eboot), lie et signe le titre,
   et fait les icônes PlayStation de la manette à partir des fichiers de votre jeu.
 - Il prépare les shaders du jeu sur votre PC : la préparation des shaders de la console elle-même, lancée par le `prepare/` de
-  la chaîne d'outils (aucun code du jeu : le rendu de la console et un modèle du pilote de la console construit pour Linux, donc
+  la chaîne d'outils (aucun code du jeu : le rendu de la console et un modèle du pilote de la console construit pour le PC, donc
   les clés de cache de la console) sur tous les cœurs, autant de compilations à la fois que la mémoire libre le permet ; puis
   il vérifie le cache (une seconde passe refait tout et trouve tout) et le met dans le dossier du titre (`radv-shader-cache/`).
-  Linux x86-64 pour l'instant ; `--no-prepare` s'en passe (la console compile alors en jouant).
+  Sous Linux et sous Windows ; `--no-prepare` s'en passe (la console compile alors en jouant).
 - Il refuse un autre jeu ou une autre version que 131072, et une construction qui laisserait trop peu de mémoire à la
   console.
 - Il faut environ 45 minutes sur un PC récent à 8 cœurs (la compilation ~25, la préparation des shaders ~15), jusqu'à 2 heures
@@ -287,6 +352,9 @@ cloner ce dépôt, décompresser la chaîne d'outils, puis, dans le dossier du d
   vous.
 
 ### Installer sur la console
+
+L'étape 6 de la fenêtre fait les points 1 et 2 par FTP (voir [Construire sous Windows](#construire-sous-windows)) ; à la
+main :
 
 1. Copiez `<sortie>/homebrew/GRPN00001/` (avec son `radv-shader-cache/`) dans **`/data/homebrew/GRPN00001/`**.
 2. Copiez `<sortie>/data/grapnel/` dans **`/data/grapnel/`**, et votre fichier du jeu dedans, tel quel, sous le nom
@@ -342,6 +410,11 @@ signalé comme tel sur l'écran de lancement. Deux options :
 En jeu, **pavé tactile + R1** ouvre et ferme le menu Grapnel (Options reste la pause du jeu). Il montre les réglages qui
 marchent sur la console, **Revenir à l'écran Grapnel** (ferme le jeu et relance Grapnel sur son écran de lancement) et
 **Quitter**. Dans les menus, le stick gauche se déplace comme la croix.
+
+**L'ocarina peut se jouer au micro de la DualSense** (celle du joueur 1), quand l'option micro du jeu est activée ; le menu
+a aussi Microphone, Gain du microphone et Tester le microphone. La voix ne quitte jamais la console : rien n'est envoyé ni
+enregistré, rien n'est capté tant que le jeu n'écoute pas, et le bouton muet de la manette coupe tout. Essayé en firmware
+12.60 ; `HOOKSHOT_PS5_MIC=0` dans `/data/grapnel/hookshot_env.txt` l'éteint.
 
 ### En cas de problème
 

@@ -1,0 +1,19 @@
+Subject: [PATCH 1/4] meson: allow the shader cache on Windows (Grapnel's
+ preparation tool fills it on a Windows PC)
+
+---
+ meson.build | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/meson.build b/meson.build
+index e9f9e3e8d36..96819bd8178 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1195,7 +1195,6 @@ if with_split_debug.allowed() and get_option('debug')
+ endif
+ 
+ with_shader_cache = get_option('shader-cache') \
+-  .require(host_machine.system() != 'windows', error_message : 'Shader Cache does not currently work on Windows') \
+   .allowed()
+ 
+ if with_shader_cache

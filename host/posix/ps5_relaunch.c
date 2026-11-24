@@ -25,6 +25,7 @@ int sceSystemServiceLoadExec(const char *path, const char *const *argv);
 int sceKernelUsleep(uint32_t microseconds);
 void hos_ps5_exit(int code) __attribute__((noreturn));
 void mkwvk_close_asked(void);   /* (gpu/vk/vk_main.cpp: the renderer's close hook, linked in the same eboot) */
+void hos_ps5_mic_end(void);     /* (lot 86, host/posix/hos_sdl_ps5.c: the microphone's port closed, its thread ended) */
 
 static void say(const char *line) {
     hos_log("%s", line);
@@ -39,6 +40,7 @@ static DWORD WINAPI close_main(LPVOID unused) {
 }
 /* (mkwvk_close_asked on a thread of its own, waited for wait_ms at most) */
 static int close_work(unsigned wait_ms) {
+    hos_ps5_mic_end();   /* (lot 86: first, and bounded: 300 ms at most; nothing when the microphone was never opened) */
     close_done = CreateEventA(NULL, TRUE, FALSE, NULL);
     const HANDLE t = close_done ? CreateThread(NULL, 8u << 20, close_main, NULL, 0, NULL) : NULL;
     if (!t) {

@@ -1,0 +1,266 @@
+Subject: [PATCH 4/4] Windows (MinGW): the cache's last POSIX calls (fstatat,
+ st_blocks, fcntl locks, passwd), no Win32/DXGI presentation in the PC model's
+ driver
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/util/disk_cache_os.c           | 47 +++++++++++++++++++++++++-----
+ src/util/grapnel_win_posix.h       |  5 ++++
+ src/util/mesa_cache_db.h           |  2 +-
+ src/util/mesa_cache_db_multipart.c |  3 ++
+ src/vulkan/meson.build             |  3 ++
+ src/vulkan/wsi/wsi_common.c        | 14 ++++-----
+ 6 files changed, 58 insertions(+), 16 deletions(-)
+
+diff --git a/src/util/disk_cache_os.c b/src/util/disk_cache_os.c
+index 8e79c13adcf..b1717771752 100644
+--- a/src/util/disk_cache_os.c
++++ b/src/util/disk_cache_os.c
+@@ -108,6 +108,25 @@ disk_cache_get_function_identifier(void *ptr, blake3_hasher *ctx)
+ #include "util/ralloc.h"
+ #include "util/rand_xor.h"
+ 
++#ifdef _WIN32
++/* (Grapnel, MinGW) no fstatat: the entry's path, then stat */
++static int
++grapnel_stat_in(const char *dir, const char *name, struct stat *st)
++{
++   char path[4096];
++   if (snprintf(path, sizeof(path), "%s/%s", dir, name) >= (int)sizeof(path))
++      return -1;
++   return stat(path, st);
++}
++#define DISK_CACHE_DIRFD(dir) 0
++#define DISK_CACHE_STATAT(fd, name, st, flags) grapnel_stat_in(dir_path, name, st)
++#define DISK_CACHE_BYTES(sb) GRAPNEL_ST_BYTES(sb)
++#else
++#define DISK_CACHE_DIRFD(dir) dirfd(dir)
++#define DISK_CACHE_STATAT(fd, name, st, flags) fstatat(fd, name, st, flags)
++#define DISK_CACHE_BYTES(sb) ((uint64_t)(sb).st_blocks * 512)
++#endif
++
+ /* A PS5 title's cache stays open to the console's FTP service, which runs as
+  * another user: folders 0777 and files 0666, whatever the umask. Elsewhere
+  * the cache is the user's own. */
+@@ -276,7 +295,7 @@ choose_lru_file_matching(const char *dir_path,
+    if (dir == NULL)
+       return NULL;
+ 
+-   const int dir_fd = dirfd(dir);
++   UNUSED const int dir_fd = DISK_CACHE_DIRFD(dir);
+ 
+    /* First count the number of files in the directory */
+    unsigned total_file_count = 0;
+@@ -288,7 +307,7 @@ choose_lru_file_matching(const char *dir_path,
+ #else
+       struct stat st;
+ 
+-      if (fstatat(dir_fd, dir_ent->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
++      if (DISK_CACHE_STATAT(dir_fd, dir_ent->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+          if (S_ISREG(st.st_mode)) {
+             total_file_count++;
+          }
+@@ -313,7 +332,7 @@ choose_lru_file_matching(const char *dir_path,
+          break;
+ 
+       struct stat sb;
+-      if (fstatat(dir_fd, dir_ent->d_name, &sb, 0) == 0) {
++      if (DISK_CACHE_STATAT(dir_fd, dir_ent->d_name, &sb, 0) == 0) {
+          struct lru_file *entry = NULL;
+          if (!list_is_empty(lru_file_list))
+             entry = list_first_entry(lru_file_list, struct lru_file, node);
+@@ -358,7 +377,7 @@ choose_lru_file_matching(const char *dir_path,
+                entry->lru_name = tmp;
+                memcpy(entry->lru_name, dir_ent->d_name, len + 1);
+                entry->lru_atime = sb.st_atime;
+-               entry->lru_file_size = sb.st_blocks * 512;
++               entry->lru_file_size = DISK_CACHE_BYTES(sb);
+             }
+          }
+       }
+@@ -574,8 +593,8 @@ disk_cache_evict_item(struct disk_cache *cache, char *filename)
+    unlink(filename);
+    free(filename);
+ 
+-   if (sb.st_blocks)
+-      p_atomic_add(&cache->size->value, - (uint64_t)sb.st_blocks * 512);
++   if (DISK_CACHE_BYTES(sb))
++      p_atomic_add(&cache->size->value, - DISK_CACHE_BYTES(sb));
+ }
+ 
+ static void *
+@@ -835,7 +854,7 @@ disk_cache_write_item_to_disk(struct disk_cache_put_job *dc_job,
+     * open with the flock held. So just let that file be responsible
+     * for writing the file.
+     */
+-#ifdef HAVE_FLOCK
++#if defined(HAVE_FLOCK) || defined(_WIN32)
+    int err = flock(fd, LOCK_EX | LOCK_NB);
+ #else
+    struct flock lock = {
+@@ -893,7 +912,7 @@ disk_cache_write_item_to_disk(struct disk_cache_put_job *dc_job,
+       goto done;
+    }
+ 
+-   p_atomic_add(&dc_job->cache->size->value, sb.st_blocks * 512);
++   p_atomic_add(&dc_job->cache->size->value, DISK_CACHE_BYTES(sb));
+ 
+  done:
+    if (fd_final != -1)
+@@ -983,6 +1002,17 @@ disk_cache_generate_cache_dir(void *mem_ctx, const char *gpu_name,
+       }
+    }
+ 
++#ifdef _WIN32
++   /* (Grapnel, MinGW) no passwd: the user's local application data */
++   if (!path) {
++      const char *local = getenv("LOCALAPPDATA");
++      if (!local)
++         return NULL;
++      path = concatenate_and_mkdir(mem_ctx, local, cache_dir_name, mkdir);
++      if (!path)
++         return NULL;
++   }
++#else
+    if (!path) {
+       char *buf;
+       size_t buf_size;
+@@ -1017,6 +1047,7 @@ disk_cache_generate_cache_dir(void *mem_ctx, const char *gpu_name,
+       if (!path)
+          return NULL;
+    }
++#endif
+ 
+    if (cache_type == DISK_CACHE_SINGLE_FILE) {
+       path = concatenate_and_mkdir(mem_ctx, path, driver_id, mkdir);
+diff --git a/src/util/grapnel_win_posix.h b/src/util/grapnel_win_posix.h
+index 0494c009491..c35cdde35fe 100644
+--- a/src/util/grapnel_win_posix.h
++++ b/src/util/grapnel_win_posix.h
+@@ -13,6 +13,8 @@
+ 
+ #include <direct.h>
+ #include <errno.h>
++#include <stdbool.h>
++#include <stdio.h>
+ #include <fcntl.h>
+ #include <io.h>
+ #include <stdint.h>
+@@ -25,6 +27,9 @@
+ #define O_CLOEXEC (O_NOINHERIT | O_BINARY)
+ #endif
+ 
++/* Windows' stat has no st_blocks: the size, in whole 512-byte blocks. */
++#define GRAPNEL_ST_BYTES(sb) (((uint64_t)(sb).st_size + 511) & ~(uint64_t)511)
++
+ /* mkdir has no mode on Windows. */
+ #define mkdir(path, mode) _mkdir(path)
+ 
+diff --git a/src/util/mesa_cache_db.h b/src/util/mesa_cache_db.h
+index 6c5abb3eedd..2268028b8a4 100644
+--- a/src/util/mesa_cache_db.h
++++ b/src/util/mesa_cache_db.h
+@@ -47,7 +47,7 @@ struct mesa_cache_db {
+    unsigned dirty_times;
+ };
+ 
+-#if DETECT_OS_WINDOWS == 0
++#if DETECT_OS_WINDOWS == 0 || defined(GRAPNEL_WIN_CACHE)
+ bool
+ mesa_cache_db_open(struct mesa_cache_db *db, const char *cache_path);
+ 
+diff --git a/src/util/mesa_cache_db_multipart.c b/src/util/mesa_cache_db_multipart.c
+index 5f9ac1e8b8c..702140378bd 100644
+--- a/src/util/mesa_cache_db_multipart.c
++++ b/src/util/mesa_cache_db_multipart.c
+@@ -8,6 +8,9 @@
+ #include <sys/stat.h>
+ 
+ #include "detect_os.h"
++#ifdef _WIN32
++#include "grapnel_win_posix.h"
++#endif
+ #include "string.h"
+ #include "mesa_cache_db_multipart.h"
+ #include "u_debug.h"
+diff --git a/src/vulkan/meson.build b/src/vulkan/meson.build
+index e3ee5f4d7ad..5661a139e47 100644
+--- a/src/vulkan/meson.build
++++ b/src/vulkan/meson.build
+@@ -70,6 +70,9 @@ if with_platform_android
+ endif
+ if with_platform_windows or host_machine.system() == 'windows'   # (Grapnel: the runtime's Win32 entry points, no Win32 WSI)
+   vulkan_wsi_list += '-DVK_USE_PLATFORM_WIN32_KHR'
++  if not with_platform_windows
++    vulkan_wsi_list += '-DGRAPNEL_NO_WIN32_WSI'
++  endif
+ endif
+ if with_platform_macos
+   vulkan_wsi_list += '-DVK_USE_PLATFORM_MACOS_MVK'
+diff --git a/src/vulkan/wsi/wsi_common.c b/src/vulkan/wsi/wsi_common.c
+index 3df6d822903..36ef47c44d2 100644
+--- a/src/vulkan/wsi/wsi_common.c
++++ b/src/vulkan/wsi/wsi_common.c
+@@ -252,7 +252,7 @@ wsi_device_init(struct wsi_device *wsi,
+       goto fail;
+ #endif
+ 
+-#ifdef VK_USE_PLATFORM_WIN32_KHR
++#if defined(VK_USE_PLATFORM_WIN32_KHR) && !defined(GRAPNEL_NO_WIN32_WSI)
+    result = wsi_win32_init_wsi(wsi, alloc, pdevice);
+    if (result != VK_SUCCESS)
+       goto fail;
+@@ -270,7 +270,7 @@ wsi_device_init(struct wsi_device *wsi,
+       goto fail;
+ #endif
+ 
+-#ifndef VK_USE_PLATFORM_WIN32_KHR
++#if !defined(VK_USE_PLATFORM_WIN32_KHR) || defined(GRAPNEL_NO_WIN32_WSI)
+    result = wsi_headless_init_wsi(wsi, alloc, pdevice);
+    if (result != VK_SUCCESS)
+       goto fail;
+@@ -341,7 +341,7 @@ void
+ wsi_device_finish(struct wsi_device *wsi,
+                   const VkAllocationCallbacks *alloc)
+ {
+-#ifndef VK_USE_PLATFORM_WIN32_KHR
++#if !defined(VK_USE_PLATFORM_WIN32_KHR) || defined(GRAPNEL_NO_WIN32_WSI)
+    wsi_headless_finish_wsi(wsi, alloc);
+ #endif
+ #ifdef VK_USE_PLATFORM_DISPLAY_KHR
+@@ -350,7 +350,7 @@ wsi_device_finish(struct wsi_device *wsi,
+ #ifdef VK_USE_PLATFORM_WAYLAND_KHR
+    wsi_wl_finish_wsi(wsi, alloc);
+ #endif
+-#ifdef VK_USE_PLATFORM_WIN32_KHR
++#if defined(VK_USE_PLATFORM_WIN32_KHR) && !defined(GRAPNEL_NO_WIN32_WSI)
+    wsi_win32_finish_wsi(wsi, alloc);
+ #endif
+ #if defined(VK_USE_PLATFORM_XCB_KHR)
+@@ -378,7 +378,7 @@ wsi_DestroySurfaceKHR(VkInstance _instance,
+       return;
+    }
+ #endif
+-#ifdef VK_USE_PLATFORM_WIN32_KHR
++#if defined(VK_USE_PLATFORM_WIN32_KHR) && !defined(GRAPNEL_NO_WIN32_WSI)
+    if (surface->platform == VK_ICD_WSI_PLATFORM_WIN32) {
+       wsi_win32_surface_destroy(surface, _instance, pAllocator);
+       return;
+@@ -417,7 +417,7 @@ get_blit_type(const struct wsi_device *wsi,
+          WSI_SWAPCHAIN_BUFFER_BLIT : WSI_SWAPCHAIN_NO_BLIT;
+    }
+ #endif
+-#ifdef _WIN32
++#if defined(_WIN32) && !defined(GRAPNEL_NO_WIN32_WSI)
+    case WSI_IMAGE_TYPE_DXGI: {
+       const struct wsi_dxgi_image_params *dxgi_params =
+          container_of(params, const struct wsi_dxgi_image_params, base);
+@@ -470,7 +470,7 @@ configure_image(const struct wsi_swapchain *chain,
+       return wsi_drm_configure_image(chain, pCreateInfo, drm_params, info);
+    }
+ #endif
+-#ifdef _WIN32
++#if defined(_WIN32) && !defined(GRAPNEL_NO_WIN32_WSI)
+    case WSI_IMAGE_TYPE_DXGI: {
+       const struct wsi_dxgi_image_params *dxgi_params =
+          container_of(params, const struct wsi_dxgi_image_params, base);

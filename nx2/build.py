@@ -675,7 +675,9 @@ class ProcessMemory(ctypes.Structure):   # (Windows' PROCESS_MEMORY_COUNTERS, fo
 
 # (what one compiler is counted at where its own need is not worked out: a hot piece (0.8-1.7 GB measured, -O2 and the profile),
 # and the compile countdown's guess of how many the free memory holds. About the median chunk's peak)
-COMPILER_MB = 1500
+# (a hot piece's peak; on Windows measured higher, 24/11/2026: code_hot_0.c 1,555 MB with the package's static clang, 1,652 MB
+# with WinLibs', 1,132 MB on Linux; the lifted chunks' estimate holds there: code_045.c 1,558 MB for an estimate above 1,610)
+COMPILER_MB = 1600 if os.name == "nt" else 1500
 
 # LONGSHOT_SPLIT_GIANTS (nx2/split_giants.py): the lifted functions of split_giants.MIN_KB or more are compiled as pieces cut at
 # their labels, with a dispatch loop under the function's own name (compile_one compiles that copy; the lifted files stay as the
@@ -1511,7 +1513,9 @@ def compile_one(job):
     lease = GATE.enter(c_src) if GATE else None
     t = time.time()
     try:
-        with subprocess.Popen([cc] + fl + ["-c", c_src, "-o", obj], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as p:
+        # ((grapnel) ps5: toolchain_ps5.command, the SDK's wrapper as it is, or without bash the arguments it gives clang)
+        cmd = toolchain_ps5.command(cc, fl + ["-c", c_src, "-o", obj]) if PS5 else [cc] + fl + ["-c", c_src, "-o", obj]
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as p:
             no_throttle(getattr(p, "_handle", None))
             if GATE:
                 GATE.started(lease, p)

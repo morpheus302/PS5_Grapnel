@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Grapnel builder v0.1 (Linux, command line): the PS5 title GRPN00001 made on the player's PC from their own game file.
+"""Grapnel builder v0.2 (Linux and Windows, command line): the PS5 title GRPN00001 made on the player's PC from their own game file.
 
     python3 -I scripts/grapnel-builder/grapnel_build.py --nup <game.nup> --out <folder> --toolchain <folder> [options]
     python3 -I scripts/grapnel-builder/grapnel_build.py --check --toolchain <folder> [options]     (the tools alone, no game)
@@ -53,6 +53,7 @@ steps with "@@" lines for a window, a memory budget for the build, the check of 
 this drives the port's own nx2/ tools.
 """
 import argparse
+import json
 import os
 import sys
 
@@ -87,6 +88,36 @@ class PrintEvents(core.Events):
               flush=True)
 
 
+class JsonEvents(core.Events):
+    """(grapnel, the window) every event as one line "@@json {...}" (UTF-8): grapnel_gui.py reads them from this process's output"""
+
+    def __init__(self):
+        self.last = None
+        self.out = sys.stdout
+
+    def emit(self, **kw):
+        print("@@json " + json.dumps(kw, ensure_ascii=False), file=self.out, flush=True)
+
+    def step(self, index, total, name):
+        self.last = None
+        self.emit(e="step", index=index, total=total, name=name)
+
+    def progress(self, fraction, text=""):
+        shown = None if fraction is None else round(fraction, 3)
+        if shown != self.last:
+            self.last = shown
+            self.emit(e="progress", fraction=shown, text=text)
+
+    def log(self, line):
+        self.emit(e="log", line=line)
+
+    def info(self, text):
+        self.emit(e="info", text=text)
+
+    def step_done(self, index, seconds, peak_mib):
+        self.emit(e="step_done", index=index, seconds=round(seconds, 1), peak_mib=peak_mib)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Grapnel builder %s: the PS5 title GRPN00001 from your own game's .nup" % core.VERSION)
     ap.add_argument("--check", action="store_true", help="check the tools on this PC (no game needed), and stop")
@@ -106,6 +137,8 @@ def main():
     ap.add_argument("--lock", help="take an exclusive lock on this file while translating and compiling")
     ap.add_argument("--nice", type=int, default=0, help="run at this niceness (the tools inherit it)")
     ap.add_argument("--measure", action="store_true", help="sample the build's memory (PSS of every process, Linux) and say each step's peak")
+    ap.add_argument("--events", choices=("text", "json"), default="text",
+                    help="json: every event as an @@json line, for the window (grapnel_gui.py)")
     ap.add_argument("--no-shaders", action="store_true", help="no list of the game's shaders and no preparation: the game compiles "
                     "them as it plays")
     ap.add_argument("--no-prepare", action="store_true", help="the lists, but no preparation on this PC: the game compiles the shaders "
@@ -120,23 +153,39 @@ def main():
             setattr(a, k, os.path.abspath(v))
     if not a.check and not (a.nup and a.out):
         ap.error("--nup and --out are needed (or --check)")
+    if a.events == "json":   # (UTF-8 whatever the system's code page: a player's folder may have accents)
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     if a.nice and hasattr(os, "nice"):
         os.nice(a.nice)
     options = core.Options(nup=a.nup or "", out=a.out or "", work=a.work or "", toolchain=a.toolchain or "", llvm=a.llvm or "",
                            jobs=a.jobs, lift_jobs=a.lift_jobs, memory=a.memory, python=a.python, prompt_python=a.prompt_python or "",
                            no_prompts=a.no_prompts, title_art=a.title_art or "", lock=a.lock or "", measure=a.measure,
                            no_shaders=a.no_shaders, no_prepare=a.no_prepare, prepare_workers=a.prepare_workers)
-    builder = core.Builder(options, PrintEvents())
+    events = JsonEvents() if a.events == "json" else PrintEvents()
+    builder = core.Builder(options, events)
     try:
         if a.check:
             builder.check()
-            print("@@done check", flush=True)
+            if a.nup:   # (with --nup, the game file too: the window's "Check")
+                tid, ver = core.check_nup(a.nup)
+                builder.ev.info("ok: the .nup holds %016X v%d, the supported game and update" % (tid, ver))
+            if a.events == "json":
+                events.emit(e="done", what="check")
+            else:
+                print("@@done check", flush=True)
         else:
             builder.run()
+            if a.events == "json":
+                events.emit(e="done", what="build", out=builder.o.out, times=builder.times)
+                return 0
             for s, sec, peak in builder.times:
                 print("   %-45s %6.0f s%s" % (s, sec, "   peak %6.0f MiB" % peak if peak is not None else ""), flush=True)
             print("@@done " + builder.o.out, flush=True)
     except core.BuildError as e:
+        if a.events == "json":
+            events.emit(e="error", code=e.code, message=e.message, details=e.details, log=e.log)
+            return 1
         print("@@error %s %s" % (e.code, e.message.replace("\n", " | ")), flush=True)
         print(e.message, file=sys.stderr)
         if e.details:
