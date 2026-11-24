@@ -55,12 +55,15 @@ if NX2 not in sys.path:
     sys.path.insert(0, NX2)
 import toolchain_ps5  # noqa: E402  (only os and subprocess: where the SDK and PS5_Vulkan are, the title's id and name)
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 STEPS = ["Reading the game's program", "Translating it to C", "Compiling and linking for the console",
          "Putting the title and data folders together", "Making the button icons",
          "Listing the game's shaders", "Preparing the shaders on this PC", "Writing the notes"]
-# The one game and update Grapnel is made from: the newest title of the player's .nup must be this one, and its main this build
+# The one game and update Grapnel is made from: the newest title of the player's .nup must be this version, under the update's
+# id or the base game's (some dumps keep the update merged under the base game's id: the console reads the newest title whatever
+# its id, as Longshot does), and its main this build (step 1 checks it after: that is what says the game is the right one)
 GAME_TITLE_ID, GAME_VERSION = 0x0400486024DEC800, 131072
+GAME_TITLE_IDS = (GAME_TITLE_ID, 0x0400486024DEC000)
 GAME_NAME = "The Legend of Zelda: Ocarina of Time (Nintendo Switch 2 Edition), update v131072"
 LLVM_VERSION = "19.1.7"
 # The lift's settings: those of the console port's builds since lot 61 (build/lot61/ps5-lift.sh: make_game.py's lift with the
@@ -762,7 +765,7 @@ def check_nup(path):
         found = ", ".join("%016X v%d" % (x["id"], x["version"]) for x in p.titles)
     finally:
         p.f.close()
-    if (t["id"], t["version"]) != (GAME_TITLE_ID, GAME_VERSION):
+    if t["id"] not in GAME_TITLE_IDS or t["version"] != GAME_VERSION:
         raise BuildError("nup-wrong-game", "this .nup holds %s, its newest title %016X v%d. Grapnel is made from %s (title %016X v%d) "
                          "and no other game or version." % (found, t["id"], t["version"], GAME_NAME, GAME_TITLE_ID, GAME_VERSION))
     return t["id"], t["version"]
@@ -950,7 +953,7 @@ class Builder:
         self.times = []   # (step name, seconds, peak PSS in MiB or None)
         self.llvm = self.t = self.env = None
         self.tool_notes = {}
-        self.exefs = self.romfs = self.bid = None
+        self.exefs = self.romfs = self.bid = self.game = None
         self.seen = {}
         self.title = self.data = self.data_name = None
         self.art = []
@@ -1124,7 +1127,7 @@ class Builder:
 
     def _read(self):
         o, work = self.o, self.o.work
-        tid, ver = check_nup(o.nup)
+        tid, ver = self.game = check_nup(o.nup)
         self.ev.info("the .nup: %s, title %016X v%d (the supported one)" % (os.path.basename(o.nup), tid, ver))
         exefs = os.path.join(work, "exefs")
         st = os.stat(o.nup)
@@ -1635,7 +1638,7 @@ class Builder:
                         e.update(crc32=crc32(p), sha256=sha256(p))
                     files[os.path.relpath(p, out)] = e
         manifest = {"builder": "Grapnel builder %s" % VERSION, "checkout": describe(), "game_build": self.bid[:16],
-                    "game": "%016X v%d" % (GAME_TITLE_ID, GAME_VERSION), "title_id": title_id, "title_name": toolchain_ps5.TITLE_NAME,
+                    "game": "%016X v%d" % (self.game or (GAME_TITLE_ID, GAME_VERSION)), "title_id": title_id, "title_name": toolchain_ps5.TITLE_NAME,
                     "data_folder": "/data/" + self.data_name, "flexible_mb": seen.get("flexible"), "mapped_mb": seen.get("mapped"),
                     "imports": seen.get("imports"), "imports_total": seen.get("imports_total"), "shader_stamp": seen.get("shader_stamp"),
                     "title_art": self.art, "lift_env": LIFT_ENV, "llvm": self.tool_notes.get("llvm"),

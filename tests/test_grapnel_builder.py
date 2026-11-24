@@ -55,6 +55,22 @@ class Refusals(unittest.TestCase):
             fake_nup(game, core.GAME_TITLE_ID, core.GAME_VERSION)
             self.assertEqual(core.check_nup(game), (core.GAME_TITLE_ID, core.GAME_VERSION))
 
+    def test_update_under_the_base_games_id(self):
+        # (a player's dump on 24/11/2026: its newest title is v131072 under the base game's id, the update merged into it; their
+        # Longshot builder took it, Grapnel 0.2.1 refused it. The console reads the newest title whatever its id, and step 1
+        # checks the program's build after: the id is the base game's or its update's)
+        base = 0x0400486024DEC000
+        self.assertIn(base, core.GAME_TITLE_IDS)
+        self.assertIn(core.GAME_TITLE_ID, core.GAME_TITLE_IDS)
+        with tempfile.TemporaryDirectory() as tmp:
+            game = os.path.join(tmp, "game.nup")
+            fake_nup(game, base, core.GAME_VERSION)
+            self.assertEqual(core.check_nup(game), (base, core.GAME_VERSION))
+            fake_nup(game, base, 65536)                  # (the base game's id, without the update)
+            self.assertEqual(self.code(game), "nup-wrong-game")
+            fake_nup(game, 0x0400486024DEC001, core.GAME_VERSION)   # (another id at that version)
+            self.assertEqual(self.code(game), "nup-wrong-game")
+
     def test_llvm_missing_says_how_to_get_it(self):
         with self.assertRaises(core.BuildError) as c:
             core.find_llvm("/nonexistent/llvm")

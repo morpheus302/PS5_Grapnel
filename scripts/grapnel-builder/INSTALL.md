@@ -1,8 +1,8 @@
-# Grapnel builder 0.2.1 (Linux): building Grapnel for your PS5
+# Grapnel builder 0.2.2 (Linux): building Grapnel for your PS5
 
 *Version française : [INSTALL.fr.md](INSTALL.fr.md).*
 
-*On Windows, take `Grapnel-Builder-0.2.1-windows-x64.zip` from the Releases page instead: a folder with everything in it and a
+*On Windows, take `Grapnel-Builder-0.2.2-windows-x64.zip` from the Releases page instead: a folder with everything in it and a
 step-by-step window (its README, and "Build it on Windows" in the repository's README). This guide is the Linux one.*
 
 Grapnel is a port to the PS5 of Longshot, the static recompilation of *The Legend of Zelda: Ocarina of Time* (Nintendo Switch 2
@@ -12,7 +12,8 @@ Linux PC from **your own copy of the game**, with this builder. Nothing it makes
 ## What you need
 
 - **Your game file**: the `.nup` dump of *Zelda: Ocarina of Time*, Nintendo Switch 2 Edition, **with its update v131072**
-  (title `0400486024DEC800`; the dump's file name may show the base game's `0400486024DEC000` instead, which is fine). The
+  (title `0400486024DEC800`; some dumps keep the update under the base game's title, `0400486024DEC000`, in the file and its
+  name: that is fine too, the builder checks the game's program itself). The
   builder takes that `.nup` only, and refuses any other game or version.
 - **A Linux PC** (64-bit x86, Ubuntu 24.04, Debian 13 or newer), **8 GB of memory** at the least (16 GB or more is faster),
   **10 GB of free disk** besides the `.nup` (and about 2 GB more for LLVM), and 45 minutes to 2 hours and a half.

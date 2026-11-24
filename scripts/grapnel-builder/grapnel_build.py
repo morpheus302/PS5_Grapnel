@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Grapnel builder v0.2.1 (Linux and Windows, command line): the PS5 title GRPN00001 made on the player's PC from their own game file.
+"""Grapnel builder v0.2.2 (Linux and Windows, command line): the PS5 title GRPN00001 made on the player's PC from their own game file.
 
     python3 -I scripts/grapnel-builder/grapnel_build.py --nup <game.nup> --out <folder> --toolchain <folder> [options]
     python3 -I scripts/grapnel-builder/grapnel_build.py --check --toolchain <folder> [options]     (the tools alone, no game)
@@ -11,7 +11,8 @@ copy. Nothing written under --out or --work may leave the player's machine, exce
 
 What it needs (INSTALL.md beside this file):
   - the game: the .nup of The Legend of Zelda: Ocarina of Time, Nintendo Switch 2 Edition, with its update v131072 (title
-    0400486024DEC800), the console dump the PS5 port reads as game.nup. Nothing else is taken (no unpacked folders);
+    0400486024DEC800, or the base game's 0400486024DEC000 in a dump that keeps the update under it), the console dump the PS5
+    port reads as game.nup. Nothing else is taken (no unpacked folders);
   - LLVM 19.1.7 (clang, clang++, lld, llvm-ar/nm/objcopy, compiler-rt's builtins): the compiler every Grapnel eboot is made with,
     so that every player makes the same one (--llvm, else llvm-config-19 / llvm-config on PATH, else /usr/lib/llvm-19);
   - the console toolchain folder (--toolchain: make_toolchain.py makes it): the PS5 payload SDK, PS5_Vulkan's link recipe and
