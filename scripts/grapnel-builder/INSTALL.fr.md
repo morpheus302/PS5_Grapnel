@@ -1,8 +1,8 @@
-# Constructeur Grapnel 0.2.4 (Linux) : fabriquer Grapnel pour votre PS5
+# Constructeur Grapnel 0.2.5 (Linux) : fabriquer Grapnel pour votre PS5
 
 *English version: [INSTALL.md](INSTALL.md).*
 
-*Sous Windows, prenez plutôt `Grapnel-Builder-0.2.4-windows-x64.zip` sur la page Releases : un dossier qui contient tout et
+*Sous Windows, prenez plutôt `Grapnel-Builder-0.2.5-windows-x64.zip` sur la page Releases : un dossier qui contient tout et
 une fenêtre pas à pas (son LISEZMOI, et « Construire sous Windows » dans le README du dépôt). Ce guide-ci est celui de Linux.*
 
 Grapnel est un portage sur PS5 de Longshot, la recompilation statique de *The Legend of Zelda: Ocarina of Time* (Nintendo
@@ -17,8 +17,9 @@ sur votre propre PC Linux, à partir de **votre propre copie du jeu**, avec ce c
   dans le fichier et son nom : c'est bon aussi, le constructeur vérifie le programme du jeu lui-même). Le constructeur ne prend
   que ce `.nup`, et refuse tout autre jeu ou version.
 - **Un PC Linux** (x86 64 bits, Ubuntu 24.04, Debian 13 ou plus récent), **8 Go de mémoire** au moins (16 Go ou plus va plus
-  vite), **10 Go libres sur le disque** en plus du `.nup` (et environ 2 Go de plus pour LLVM), et de 45 minutes à 2 heures et
-  demie.
+  vite), **10 Go libres sur le disque** en plus du `.nup` (et environ 2 Go de plus pour LLVM ; **25,3 Go de plus** si votre dump
+  garde des fichiers du jeu compressés : [plus bas](#si-votre-dump-garde-des-fichiers-compressés)), et de 45 minutes à
+  2 heures et demie.
 - **LLVM 19.1.7** exactement (tous les joueurs compilent avec le même compilateur : chaque eboot est celui que le projet a
   essayé), **Python 3.12 ou plus récent** (les paquets du constructeur l'exigent) et **git** : comment les avoir, ci-dessous.
 - **La chaîne d'outils console**, `grapnel-toolchain-0.3.3-linux-x64.tar.xz`, sur la page **Releases** du dépôt Grapnel
@@ -109,7 +110,9 @@ listes ont changé).
    `/data/grapnel` ; copiez `image.bin`, `prompts/` et `hookshot_prepare_progress.txt` dans `/data/hookshot`. Le premier
    lancement de Grapnel le renomme en `/data/grapnel`, sauvegardes comprises ; un `/data/grapnel` créé avant serait pris à sa
    place, et les sauvegardes laissées.
-3. Votre `.nup`, tel quel → `/data/grapnel/game.nup`.
+3. Votre fichier du jeu → `/data/grapnel/game.nup` : votre `.nup` tel quel, **ou, si le constructeur a dit que votre dump
+   garde des fichiers du jeu compressés, la copie à plat qu'il en a faite** (`<out>/game.nup`, ou dans le dossier de
+   `--flat-dir`), jamais ce dump lui-même. `<out>/INSTALL.fr.txt` nomme le fichier à copier.
 4. Lancez Grapnel. **Les shaders sont prêts** : le constructeur les a préparés sur votre PC, dans le cache même du pilote de
    la console (le `radv-shader-cache` du dossier du titre), pour que le jeu ne s'arrête pas pour les compiler en jouant (chaque
    compilation en jeu est un arrêt d'une seconde et plus, et de la mémoire que la console ne récupère jamais). La console ne
@@ -117,6 +120,43 @@ listes ont changé).
    qu'aucune liste ne connaît est encore compilé à sa première apparition.
 
 `eboot.bin` et `image.bin` vont ensemble : après chaque nouvelle construction, recopiez les deux.
+
+## Si votre dump garde des fichiers compressés
+
+Certains outils de dump gardent une partie des fichiers du jeu compressés dans le `.nup` (zstd, « codec 1 » : environ un
+cinquième des fichiers, 40 588 sur 186 587, dans les dumps vus jusqu'ici), ou chaque fichier sous forme de trame zstd de
+lui-même. Le constructeur lit un tel `.nup` sans peine, mais la console lit le fichier du jeu tel quel, sur place, et ne sait
+pas ouvrir ces fichiers-là : le jeu s'arrête dès qu'on appuie sur Jouer (le journal dit `stored zstd-compressed in the package
+(codec 1): not read in place`). Avant la 0.2.3, un tel dump se construisait et ne se jouait pas ; la 0.2.3 et la 0.2.4 le
+refusaient à l'étape 1.
+
+Désormais, le constructeur le dit au début de la construction (`==== Compression detected ====` ; la fenêtre : une page à
+elle, « Compression détectée ») et fait, **une seule fois**, une **copie à plat** de votre dump :
+le même jeu, chaque fichier tel quel, comme dans un dump normal (seule la mise à jour du jeu est gardée, avec son programme et
+ses fichiers : ce que lisent la console et le constructeur). Elle va dans `<out>/game.nup` (`--flat-dir <dossier>` en choisit
+un autre, sur un autre disque si celui-ci est plein), environ **25,3 Go** : le constructeur vérifie d'abord la place sur ce
+disque et dit combien il en manque. Elle est écrite, puis relue en entier et chaque fichier vérifié contre ce que le dump
+contient (son SHA-256), puis gardée : les constructions suivantes la reprennent (`game.nup.grapnel.json` à côté dit de quel
+fichier elle vient). Une copie interrompue (PC éteint, Ctrl+C) reprend où elle s'était arrêtée. Votre dump n'est jamais
+modifié. **Cette copie est le fichier du jeu dont la console a besoin** : l'étape 6 de la fenêtre l'envoie, et à la main
+c'est elle que vous copiez, pas votre dump. `--flatten` fait la copie seule, sans construire :
+
+```sh
+~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --flatten --nup "$HOME/<votre dump>.nup" --flat-dir ~/grapnel-out
+```
+
+Un `.nup` normal n'a pas de copie : c'est le fichier du jeu tel quel.
+
+## Fichiers corrompus
+
+Chaque construction compare les fichiers de votre dump à ceux d'un dump sain de la même version, d'après les empreintes
+(SHA-256) que le `.nup` porte lui-même pour chaque fichier, en moins d'une seconde
+(`scripts/grapnel-builder/data/game_files_v131072.ref.xz` : des noms de fichiers et des empreintes, rien du jeu). Un fichier dont
+l'empreinte diffère (l'outil de dump l'a mal lu : certains dumps de 23 Go ont des blocs de zéros dans quelques fichiers) ou qui
+manque est dit en premier, `==== Corrupted files detected ====` et la liste (la fenêtre : un encadré rouge, « Fichiers
+corrompus détectés »). Là où le jeu s'en sert, il peut manquer une texture, un son ou une voix (les murs du Temple de l'Eau
+dans ces dumps), ou le jeu peut s'arrêter : refaites le dump si vous le pouvez. La construction continue. Un fichier que votre
+dump a en plus de la référence n'est pas une faute.
 
 ## Privé
 

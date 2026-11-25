@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Grapnel builder v0.2.4 (Linux and Windows, command line): the PS5 title GRPN00001 made on the player's PC from their own game file.
+"""Grapnel builder v0.2.5 (Linux and Windows, command line): the PS5 title GRPN00001 made on the player's PC from their own game file.
 
     python3 -I scripts/grapnel-builder/grapnel_build.py --nup <game.nup> --out <folder> --toolchain <folder> [options]
     python3 -I scripts/grapnel-builder/grapnel_build.py --check --toolchain <folder> [options]     (the tools alone, no game)
+    python3 -I scripts/grapnel-builder/grapnel_build.py --flatten --nup <game.nup> --flat-dir <folder>   (the flat copy alone)
 
 The eboot holds the game's code translated to C and compiled, image.bin is the game's program as the console loads it, and the
 button icons hold the game's font and textures: none of them may be shared, so every player makes them here, from their own
@@ -19,6 +20,18 @@ What it needs (INSTALL.md beside this file):
     ps5-native-tool, the RADV archive, the renderer's headers, dav1d. Without it, the places the port's own PC has them;
   - Python 3.12+ with requirements.txt (numpy, capstone, lz4, zstandard; the icons' fontTools, Pillow, astc-encoder-py,
     texture2ddecoder).
+
+A .nup whose game files are stored compressed (some dumpers: codec 1 for a fifth of the files, or every file a zstd frame of
+itself) builds as any other, but the console reads the game file in place and opens no compressed file: the game would stop as
+Play is pressed. Before step 1 the builder makes, once, a flat copy of it (grapnel_flat.py: the same game, every file as
+itself; 25.3 GB for this game: its files that share their bytes once) in --flat-dir (default: --out), checks it, and that copy is
+the game file the console is given (the notes and manifest.json say so; grapnel_send.py sends it). The next builds take it
+again. A normal .nup is given as it is: no copy. --flatten makes the copy alone (the window's step after the game).
+
+Corrupted files: the .nup's TOC holds every file's SHA-256, which step 1 compares with a sound dump's (data/game_files_v131072.ref.xz,
+grapnel_game_files.py: paths and the hashes' first 8 bytes, no game content). A file whose SHA-256 differs (a dump that read it
+wrong) or that is missing is said first, "==== Corrupted files detected ====" and the list: the game may miss a texture, a sound,
+or stop where it uses one. The build goes on.
 
 The steps (grapnel_core.py, which a window can drive the same way):
   1. the .nup checked (a NUP package, the supported game and update) and the game's program read out of it (nx2/nup.py: about
@@ -122,6 +135,9 @@ class JsonEvents(core.Events):
 def main():
     ap = argparse.ArgumentParser(description="Grapnel builder %s: the PS5 title GRPN00001 from your own game's .nup" % core.VERSION)
     ap.add_argument("--check", action="store_true", help="check the tools on this PC (no game needed), and stop")
+    ap.add_argument("--flatten", action="store_true", help="only make the flat copy of a .nup whose game files are compressed (in "
+                    "--flat-dir, else --out), which the console is given; nothing for a normal .nup")
+    ap.add_argument("--flat-dir", help="where the flat copy of a .nup whose game files are compressed goes (default: --out)")
     ap.add_argument("--nup", help="your game file: the .nup of Zelda: Ocarina of Time (Switch 2 Edition) with its update v131072")
     ap.add_argument("--out", help="where the title and data folders go")
     ap.add_argument("--work", help="the build's own files (default <out>/grapnel-work; kept, so a second build is short)")
@@ -148,11 +164,13 @@ def main():
                     "free decides how many work)")
     a = ap.parse_args()
     # (the tools run from the checkout's root: a relative path given here is the caller's, made absolute now)
-    for k in ("python", "prompt_python", "nup", "out", "work", "toolchain", "llvm", "title_art", "lock"):
+    for k in ("python", "prompt_python", "nup", "out", "work", "toolchain", "llvm", "title_art", "lock", "flat_dir"):
         v = getattr(a, k)
         if v and (k not in ("python", "prompt_python") or os.sep in v):
             setattr(a, k, os.path.abspath(v))
-    if not a.check and not (a.nup and a.out):
+    if a.flatten and not (a.nup and (a.flat_dir or a.out)):
+        ap.error("--flatten needs --nup and --flat-dir (or --out)")
+    if not a.check and not a.flatten and not (a.nup and a.out):
         ap.error("--nup and --out are needed (or --check)")
     if a.events == "json":   # (UTF-8 whatever the system's code page: a player's folder may have accents)
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
@@ -162,15 +180,29 @@ def main():
     options = core.Options(nup=a.nup or "", out=a.out or "", work=a.work or "", toolchain=a.toolchain or "", llvm=a.llvm or "",
                            jobs=a.jobs, lift_jobs=a.lift_jobs, memory=a.memory, python=a.python, prompt_python=a.prompt_python or "",
                            no_prompts=a.no_prompts, title_art=a.title_art or "", lock=a.lock or "", measure=a.measure,
-                           no_shaders=a.no_shaders, no_prepare=a.no_prepare, prepare_workers=a.prepare_workers)
+                           no_shaders=a.no_shaders, no_prepare=a.no_prepare, prepare_workers=a.prepare_workers,
+                           flat_dir=a.flat_dir or "")
     events = JsonEvents() if a.events == "json" else PrintEvents()
     builder = core.Builder(options, events)
     try:
+        if a.flatten:
+            path = builder.flatten()
+            if a.events == "json":
+                events.emit(e="done", what="flatten", path=path, flat=builder.flat is not None, summary=builder.flat)
+            else:
+                print("@@done %s" % path, flush=True)
+            return 0
         if a.check:
             builder.check()
             if a.nup:   # (with --nup, the game file too: the window's "Check")
-                tid, ver = core.check_nup(a.nup)
+                facts = {}
+                tid, ver = core.check_nup(a.nup, facts)
                 builder.ev.info("ok: the .nup holds %016X v%d, the supported game and update" % (tid, ver))
+                builder.say_files(facts.get("game_files"))
+                if facts["flat"]:   # (its game files compressed: the console is given its flat copy, made before the build)
+                    path, _, why = core.console_game_file(a.nup, builder.o.flat_dir)
+                    builder.ev.info("ok: the console is given the flat copy %s" % path if path else
+                                    "note: the .nup keeps game files compressed: %s" % why)
             if a.events == "json":
                 events.emit(e="done", what="check")
             else:

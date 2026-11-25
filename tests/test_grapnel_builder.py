@@ -5,13 +5,18 @@ progress, the title's identity, and the ZBIC program's own check.
 import json
 import os
 import struct
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "scripts", "grapnel-builder"))
+HERE = os.path.join(ROOT, "scripts", "grapnel-builder")
+sys.path.insert(0, HERE)
+# (the small packages here are not the game: no reference of its files, so none is said missing; tests/test_grapnel_game_files.py
+# checks the reference's own work)
+os.environ["GRAPNEL_GAME_FILES_REFERENCE"] = os.path.join(ROOT, "tests", "no-such-reference.ref.xz")
 import grapnel_core as core  # noqa: E402
 
 RUN_ALL_MODULES = ["zstandard"]
@@ -85,28 +90,86 @@ class Refusals(unittest.TestCase):
             fake_nup(game, core.GAME_TITLE_ID, core.GAME_VERSION)
             self.assertEqual(core.check_nup(game), (core.GAME_TITLE_ID, core.GAME_VERSION))
 
-    def test_compressed_game_files_are_refused(self):
-        # (0.2.3: the console reads the game file in place (host/nup_fs.c) and opens no compressed file: a player's dump built,
-        # and the game stopped as Play was pressed. Files with codec 1, or a package of zstd frames with codec 0, are refused at
-        # step 1; plain files, and .zs files that are zstd in the game too, are taken)
+    def test_compressed_game_files_get_a_flat_copy(self):
+        # (0.2.3 refused a .nup whose game files are compressed: the console reads the game file in place (host/nup_fs.c) and opens
+        # no compressed file, and a player's game stopped as Play was pressed (its log: 40,588 files with codec 1, Pack/ZsDic.pack.zs
+        # not opened, 25/11/2026). The builder now takes it and gives the console a flat copy (grapnel_flat.py,
+        # tests/test_grapnel_flat.py); a normal .nup is given as it is, with no copy made)
         import zstandard
-        plain = [("f%03d.bin" % i, bytes(range(64)) * 2, 128, 0) for i in range(80)] + [("t.zs", zstandard.compress(b"x" * 100), 100, 0)]
+        body = bytes(range(64)) * 2
+        frame = zstandard.ZstdCompressor(write_content_size=True).compress(body)
+        game_zs = zstandard.ZstdCompressor(write_content_size=True).compress(b"x" * 4000)   # (a .zs of the game: zstd in the game too)
+        plain = [("f%03d.bin" % i, body, 128, 0) for i in range(80)] + [("t.zs", game_zs, len(game_zs), 0)]
         with tempfile.TemporaryDirectory() as tmp:
             game = os.path.join(tmp, "game.nup")
+            facts = {}
             nup_with_files(game, core.GAME_TITLE_ID, core.GAME_VERSION, plain)
-            self.assertEqual(core.check_nup(game), (core.GAME_TITLE_ID, core.GAME_VERSION))
-            frame = zstandard.ZstdCompressor(write_content_size=True).compress(bytes(range(64)) * 2)
-            coded = plain[:40] + [("c%03d.bin" % i, frame, 128, 1) for i in range(3)] + plain[40:]
+            self.assertEqual(core.check_nup(game, facts), (core.GAME_TITLE_ID, core.GAME_VERSION))
+            self.assertFalse(facts["flat"])
+            b = core.Builder(core.Options(nup=game, out=os.path.join(tmp, "out")))
+            self.assertEqual(b.flatten(), game)   # (a normal .nup: itself, nothing written)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "out")))
+            self.assertEqual(core.console_game_file(game, os.path.join(tmp, "out")), (game, False, ""))
+            outer = zstandard.ZstdCompressor(write_checksum=True).compress(game_zs)   # (codec 1 over the game's .zs: ZsDic.pack.zs)
+            coded = plain[:40] + [("c%03d.bin" % i, frame, 128, 1) for i in range(3)] + plain[40:80] + [("t.zs", outer, len(game_zs), 1)]
             nup_with_files(game, core.GAME_TITLE_ID, core.GAME_VERSION, coded)
-            self.assertEqual(self.code(game), "nup-compressed")
+            facts = {}
+            self.assertEqual(core.check_nup(game, facts), (core.GAME_TITLE_ID, core.GAME_VERSION))
+            self.assertTrue(facts["flat"])
+            self.assertEqual(facts["coded"], 4)
+            out = os.path.join(tmp, "out")
+            self.assertEqual(core.console_game_file(game, out)[:2], (None, True))
+            infos = []
+            ev = core.Events()
+            ev.info = infos.append
+            b = core.Builder(core.Options(nup=game, out=out), ev)
+            copy = b.flatten()
+            self.assertEqual(copy, os.path.join(out, "game.nup"))
+            self.assertTrue(any("keeps game files compressed" in i for i in infos))
+            self.assertEqual(infos[0], core.FLAT_BANNER)   # (the player's wish: "Compression detected", first)
+            self.assertIn("Compression detected", core.FLAT_BANNER)
+            r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "grapnel_build.py"), "--flatten", "--nup", game, "--flat-dir",
+                                os.path.join(tmp, "cli")], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(r.stdout.splitlines()[0], core.FLAT_BANNER, r.stdout[:500])   # (the command line's first line)
+            self.assertEqual(core.console_game_file(game, out), (copy, True, ""))
+            facts = {}
+            core.check_nup(copy, facts)   # (the copy is a game file the builder takes, and needs no copy)
+            self.assertFalse(facts["flat"])
+            import nup
+            p = nup.Nup(copy, strict=True)
+            try:
+                got = {}
+                for rel, r in p.walk(p.titles[0]["romfs"]):
+                    self.assertEqual((r[5], r[4]), (0, r[2]))
+                    got[rel] = p.read(r)
+            finally:
+                p.f.close()
+            self.assertEqual(got["t.zs"], game_zs)   # (the outer layer gone, the game's .zs as it is)
+            self.assertEqual(got["c001.bin"], body)
+            self.assertTrue(core.Builder(core.Options(nup=game, out=out)).flatten() == copy)   # (taken again)
             framed = [(n, frame, 128, 0) for n, _, _, _ in plain[:80]] + plain[80:]
             nup_with_files(game, core.GAME_TITLE_ID, core.GAME_VERSION, framed)
-            with self.assertRaises(core.BuildError) as c:
-                core.check_nup(game)
-            self.assertEqual(c.exception.code, "nup-compressed")
-            self.assertIn("frames of themselves", c.exception.message)
+            facts = {}
+            core.check_nup(game, facts)
+            self.assertTrue(facts["flat"] and facts["framed"] > 0 and facts["coded"] == 0)
             nup_with_files(game, 0x040074A01BF12000, 458752, framed)   # (another game: said as such first)
             self.assertEqual(self.code(game), "nup-wrong-game")
+            odd = plain[:80] + [("u.bin", body, 128, 7)]   # (a codec no one knows)
+            nup_with_files(game, core.GAME_TITLE_ID, core.GAME_VERSION, odd)
+            self.assertEqual(self.code(game), "nup-codec")
+
+    def test_window_says_compression_detected_first(self):
+        # (the player's wish, 25/11/2026: the window's page for a compressed .nup says "Compression detected" ("Compression
+        # détectée") in bold at its top, before the explanation, the room's check and the button)
+        src = open(os.path.join(HERE, "grapnel_gui.py"), encoding="utf-8").read()
+        self.assertIn('"flat_banner": "Compression détectée"', src)
+        self.assertIn('"flat_banner": "Compression detected"', src)
+        page = src[src.index("    def page_flat(self):"):src.index("    def pick_flat_dir(self):")]
+        banner, heading = page.index('t["flat_banner"]'), page.index('self.heading(t["p_flat"]')
+        self.assertLess(banner, heading)
+        self.assertLess(banner, page.index("self.flat_btn"))
+        self.assertIn("bold", page[:banner])
 
     def test_update_under_the_base_games_id(self):
         # (a player's dump on 24/11/2026: its newest title is v131072 under the base game's id, the update merged into it; their

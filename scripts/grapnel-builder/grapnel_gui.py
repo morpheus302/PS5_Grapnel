@@ -7,6 +7,11 @@
 
 The pages, as the player validated them (notes-agents/assistant-constructeur.md, 23/11/2026):
     1 Game      the .nup, checked as soon as it is chosen: Next only for the right game and update
+      (copy)    (a .nup whose game files are stored compressed only; never for a normal one) a page of its own after it: what
+                happens (the console reads only flat files: the builder makes a flat copy, here, once, and that copy is what
+                the console gets), its folder (the output folder by default, another one with Browse), the disk's room for it
+                checked first (what to do when there is too little), then the copy (grapnel_build.py --flatten) with its bar;
+                Next once it is made and checked (or taken again: one made before from the same file)
     2 Options   the output folder; the controller button icons (on by default); Advanced: the compile's memory (0 = automatic)
     3 Check     runs by itself on arrival: a list of green ticks (tools, Python, ZBIC, a test compile, the .nup, disk, memory,
                 paths); a problem says what to do; Next only when all is green
@@ -87,6 +92,53 @@ T = {
                        "celui que la console lit sous le nom game.nup. Rien n'en sort de ce PC.",
         "nup": "Fichier du jeu (.nup)", "nup_ok": "✓ Le bon jeu, avec sa mise à jour v131072.",
         "nup_checking": "Lecture du fichier…", "nup_none": "Aucun fichier choisi.",
+        "nup_flat": "\nUne partie de ses fichiers est compressée ({what}) : la page suivante en fait la copie que la console sait lire.",
+        "what_coded": "{coded} fichiers sur {files}", "what_framed": "ses fichiers sont des trames zstd",
+        "step_flat": "copie",
+        "flat_banner": "Compression détectée",
+        "p_flat": "Étape 1 sur 6 (suite) : une copie de votre jeu pour la console",
+        "flat_text": "Votre fichier du jeu garde une partie de ses fichiers compressés ({what}) : certains outils de dump "
+                     "l'écrivent ainsi. La construction s'en accommode, mais la console lit le fichier du jeu tel quel et ne "
+                     "sait pas ouvrir ces fichiers-là : le jeu s'arrêterait dès « Jouer ».\n\n"
+                     "Le constructeur en fait donc, sur ce PC et une seule fois, une copie « à plat » : le même jeu, chaque "
+                     "fichier tel quel. C'est cette copie, et non votre dump, que la console recevra (étape 6) ou que vous y "
+                     "copierez à la main. Votre dump n'est pas modifié, et les prochaines constructions reprendront la copie.",
+        "flat_cost": "Ce que cela coûte : {gb} Go sur le disque du dossier ci-dessous, et quelques minutes sur un SSD (davantage "
+                     "sur un disque dur) : la copie est écrite, puis relue en entier pour la vérifier.",
+        "flat_dir": "Dossier de la copie", "flat_reading": "Lecture du fichier du jeu…",
+        "flat_space_ok": "✓ {free} Go libres sur ce disque : assez pour la copie ({need} Go avec une marge).",
+        "flat_space_low": "✗ Pas assez de place : ce disque a {free} Go libres, la copie en demande {need} avec une marge. Libérez-y "
+                          "{more} Go (la corbeille, les téléchargements, une ancienne copie du jeu dont vous n'avez plus "
+                          "besoin…), ou choisissez avec « Parcourir… » un dossier sur un autre disque, puis « Vérifier la place ».",
+        "flat_space_again": "Vérifier la place",
+        "flat_done_before": "✓ La copie faite avant à partir de ce même fichier est là : {path} ({gb} Go). Elle est reprise : "
+                            "rien à refaire.",
+        "flat_partial": "Une copie commencée est là ({done} Go sur {gb}) : elle reprendra où elle s'était arrêtée.",
+        "flat_discard": "Effacer la copie commencée",
+        "flat_other": "✗ Ce dossier a déjà un game.nup que le constructeur n'a pas fait (ou c'est votre dump lui-même) : "
+                      "choisissez un autre dossier.",
+        "flat_stale": "Une ancienne copie, d'un autre fichier ou d'une autre version, est là : elle sera remplacée.",
+        "flat_start": "Faire la copie »",
+        "flat_made": "✓ La copie est faite et vérifiée, en {m} min : {path} ({gb} Go, {n} fichiers décompressés). C'est elle que "
+                     "la console recevra.",
+        "corrupt_banner": "Fichiers corrompus détectés",
+        "corrupt_text": "{what} dans votre dump ne sont pas ceux du jeu : leur empreinte (dans le fichier lui-même) n'est pas celle "
+                        "d'un dump sain, l'outil de dump les a mal lus.",
+        "corrupt_n": "{n} fichiers", "corrupt_1": "Un fichier", "corrupt_missing": " Et {m} fichiers du jeu manquent.",
+        "corrupt_missing_only": "{m} fichiers du jeu manquent dans votre dump : l'outil de dump ne les a pas écrits.",
+        "corrupt_more": "… et {k} autres (tous dans le journal et le rapport)",
+        "corrupt_effect": "Là où le jeu s'en sert, il peut lui manquer une texture, un son ou une voix, ou il peut s'arrêter. "
+                          "Conseil : refaites le dump de votre jeu (ou copiez-le à nouveau depuis la console). Vous pouvez "
+                          "continuer quand même.",
+        "corrupt_kinds": {"program": "programme du jeu", "texture": "texture", "model": "modèle 3D", "terrain": "terrain",
+                          "voice": "voix", "movie": "vidéo", "sound": "son", "shader": "shader", "font": "police",
+                          "ui": "interface", "text": "texte", "ai": "comportement", "physics": "physique", "effect": "effet",
+                          "event": "événement", "setting": "réglage", "pack": "paquet d'objets", "other": "fichier du jeu"},
+        "corrupt_missing_tag": "manque",
+        "corrupt_short": "La liste et ce que cela peut faire sont sur la page précédente (« Jeu »). Refaites le dump si vous le "
+                         "pouvez, ou continuez quand même.",
+        "flat_progress": {"the flat copy": "la copie", "checked": "vérifiée", "taken again": "reprise", "checking:": "vérification :",
+                          " of ": " sur ", "GB": "Go"},
         "resume": "Le jeu est déjà construit dans « {out} ».",
         "resume_shaders": "Aller aux shaders", "resume_console": "Aller à la console",
         "p_options": "Étape 2 sur 6 : options",
@@ -171,6 +223,10 @@ T = {
         "console_none": "Rien ne répond à cette adresse (ports 2121 et 9021). La console est-elle allumée, débridée, sur le même "
                         "réseau, avec son chargeur d'ELF ou un serveur FTP lancé ?",
         "console_nup": "Envoyer aussi le fichier du jeu (game.nup, 26 Go), s'il n'y est pas déjà avec sa taille",
+        "console_nup_flat": "Envoyer aussi le fichier du jeu : sa copie à plat (game.nup, {gb} Go), si elle n'y est pas déjà avec "
+                            "sa taille",
+        "console_manual_flat": "Votre dump garde des fichiers compressés : pour le fichier du jeu, copiez la copie à plat\n"
+                               "{path}\net non votre dump (la console ne saurait pas le lire).",
         "console_send": "Envoyer à la console »", "console_not_built": "Construisez d'abord le jeu (étape 4).",
         "console_ftpsrv_sent": "Le serveur FTP est envoyé au chargeur d'ELF de la console…",
         "console_ftp_late": "Le serveur FTP envoyé ne répond pas sur le port 2121.",
@@ -230,9 +286,17 @@ T = {
                               "2 Edition) avec sa mise à jour v131072.",
             "prepare-cpu": "La préparation des shaders s'est arrêtée sur une instruction que le processeur de ce PC n'a pas. "
                            "Signalez-le avec le nom du processeur (issues de Grapnel). En attendant : construisez sur un autre PC.",
-            "nup-compressed": "Ce .nup garde des fichiers du jeu compressés : la console lit le fichier du jeu tel quel et ne sait pas "
-                              "encore ouvrir ceux-là (le jeu ne pourrait pas démarrer). Certains outils de dump écrivent le jeu "
-                              "ainsi ; une version de Grapnel qui les lit est en préparation.",
+            "nup-codec": "Ce .nup range des fichiers du jeu sous une forme que le constructeur ne connaît pas : refaites le dump "
+                         "avec un autre outil.",
+            "flat-space": "Pas assez de place pour la copie du jeu : libérez de la place sur ce disque, ou choisissez un dossier "
+                          "sur un autre disque.",
+            "flat-other": "Le dossier choisi pour la copie a déjà un game.nup que le constructeur n'a pas fait : choisissez un autre "
+                          "dossier.",
+            "flat-failed": "Un fichier du jeu n'a pas pu être décompressé : votre dump est sans doute abîmé à cet endroit. Refaites "
+                           "le dump, ou copiez-le à nouveau depuis la console.",
+            "flat-verify": "La copie relue ne correspond pas à ce qui a été écrit (le disque ?). Refaites la copie ; si cela "
+                           "recommence, essayez un autre disque.",
+            "flat-cancelled": "Arrêté. La copie reprendra où elle en était.",
             "options": "Il manque le fichier du jeu ou le dossier de sortie.",
             "disk": "Pas assez de place sur le disque du dossier de sortie.",
             "tool-failed": "Un outil de la construction a échoué. Envoyez le journal avec votre rapport.",
@@ -270,6 +334,47 @@ T = {
                        "console reads as game.nup. Nothing of it leaves this PC.",
         "nup": "Game file (.nup)", "nup_ok": "✓ The right game, with its update v131072.",
         "nup_checking": "Reading the file…", "nup_none": "No file chosen.",
+        "nup_flat": "\nPart of its files are stored compressed ({what}): the next page makes the copy the console can read.",
+        "what_coded": "{coded} files of {files}", "what_framed": "its files are zstd frames",
+        "step_flat": "copy",
+        "flat_banner": "Compression detected",
+        "p_flat": "Step 1 of 6 (continued): a copy of your game for the console",
+        "flat_text": "Your game file keeps part of its files compressed ({what}): some dump tools write it that way. The build "
+                     "copes with it, but the console reads the game file as it is and cannot open those files: the game would "
+                     "stop as soon as you press Play.\n\n"
+                     "So the builder makes, on this PC and once only, a \"flat\" copy: the same game, every file as itself. That "
+                     "copy, not your dump, is what the console gets (step 6) or what you copy to it by hand. Your dump is not "
+                     "changed, and the next builds take the copy again.",
+        "flat_cost": "What it costs: {gb} GB on the disk of the folder below, and a few minutes on an SSD (more on a hard disk): "
+                     "the copy is written, then read back whole to check it.",
+        "flat_dir": "Folder for the copy", "flat_reading": "Reading the game file…",
+        "flat_space_ok": "✓ {free} GB free on this disk: enough for the copy ({need} GB with a margin).",
+        "flat_space_low": "✗ Not enough room: this disk has {free} GB free, the copy needs {need} with a margin. Free {more} GB there "
+                          "(the recycle bin, your downloads, an old copy of the game you no longer need…), or choose a folder on "
+                          "another disk with \"Browse…\", then \"Check the room\".",
+        "flat_space_again": "Check the room",
+        "flat_done_before": "✓ The copy made before from this same file is there: {path} ({gb} GB). It is taken again: nothing "
+                            "to do.",
+        "flat_partial": "A copy that was started is there ({done} GB of {gb}): it carries on where it stopped.",
+        "flat_discard": "Delete the started copy",
+        "flat_other": "✗ This folder already has a game.nup the builder did not make (or it is your dump itself): choose another "
+                      "folder.",
+        "flat_stale": "An old copy, of another file or another version, is there: it will be replaced.",
+        "flat_start": "Make the copy »",
+        "flat_made": "✓ The copy is made and checked, in {m} min: {path} ({gb} GB, {n} files unpacked). It is what the console gets.",
+        "corrupt_banner": "Corrupted files detected",
+        "corrupt_text": "{what} in your dump are not the game's: their fingerprint (in the file itself) is not a sound dump's, the "
+                        "dump tool read them wrong.",
+        "corrupt_n": "{n} files", "corrupt_1": "One file", "corrupt_missing": " And {m} files of the game are missing.",
+        "corrupt_missing_only": "{m} files of the game are missing in your dump: the dump tool did not write them.",
+        "corrupt_more": "… and {k} more (all in the log and the report)",
+        "corrupt_effect": "Where the game uses one, a texture, a sound or a voice may be missing, or the game may stop. Advice: "
+                          "dump your game again (or copy it again from the console). You can go on anyway.",
+        "corrupt_kinds": {},
+        "corrupt_missing_tag": "missing",
+        "corrupt_short": "The list, and what it may do, are on the page before (\"Game\"). Dump the game again if you can, or go "
+                         "on anyway.",
+        "flat_progress": {},
         "resume": "The game is already built in \"{out}\".",
         "resume_shaders": "Go to the shaders", "resume_console": "Go to the console",
         "p_options": "Step 2 of 6: options",
@@ -349,6 +454,9 @@ T = {
         "console_none": "Nothing answers at that address (ports 2121 and 9021). Is the console on, jailbroken, on the same "
                         "network, with its ELF loader or an FTP server running?",
         "console_nup": "Send the game file too (game.nup, 26 GB), if it is not there already with its size",
+        "console_nup_flat": "Send the game file too: its flat copy (game.nup, {gb} GB), if it is not there already with its size",
+        "console_manual_flat": "Your dump keeps files compressed: for the game file, copy the flat copy\n{path}\nnot your dump (the "
+                               "console could not read it).",
         "console_send": "Send to the console »", "console_not_built": "Build the game first (step 4).",
         "console_ftpsrv_sent": "The FTP server goes to the console's ELF loader…",
         "console_ftp_late": "The FTP server sent does not answer on port 2121.",
@@ -650,7 +758,9 @@ class Assistant:
         self.cancelled = False
         self.session_log, self._pending = [], []
         self.last_error = self.result = None
-        self.nup_state = None        # (path, ok, text)
+        self.nup_state = None        # (path, ok, text, facts: grapnel_core.check_nup's, "flat" when its files are compressed)
+        self.sub = None              # "flat": the game's page's own next page, the flat copy (a compressed .nup only)
+        self.flat_facts = None       # (the copy page's: source, folder, {"size", "state", "free", ...}) as last read
         self.check_state = None      # (inputs, all ok)
         self.done = set()            # the pages passed
         self.page = 0
@@ -681,7 +791,7 @@ class Assistant:
         self.settings.update(nup=self.nup_var.get(), out=out, icons=bool(self.icons_var.get()),
                              memory=self.memory_var.get(), chain=bool(self.chain_var.get()), outs=outs[:6],
                              console_ip=self.ip_var.get().strip(), send_nup=bool(self.send_nup_var.get()),
-                             console_place=self.place_var.get())
+                             console_place=self.place_var.get(), flat_dir=self.flat_dir_var.get().strip())
         try:
             os.makedirs(os.path.dirname(settings_path()), exist_ok=True)
             with open(settings_path(), "w", encoding="utf-8") as f:
@@ -755,6 +865,7 @@ class Assistant:
         self.memory_var = tk.StringVar(value=str(self.settings.get("memory", "0")))
         self.chain_var = tk.IntVar(value=1 if self.settings.get("chain", True) else 0)
         self.ip_var = tk.StringVar(value=self.settings.get("console_ip", ""))
+        self.flat_dir_var = tk.StringVar(value=self.settings.get("flat_dir", ""))
         self.send_nup_var = tk.IntVar(value=1 if self.settings.get("send_nup", True) else 0)
         # (where step 6 installs: the internal storage or an extension disk, /mnt/ext1; the title's place once the console says)
         chosen = getattr(self.args, "place", None)   # (--place, tests: as if chosen on the page)
@@ -774,17 +885,19 @@ class Assistant:
 
     def paint_steps(self):
         for i, (lab, name) in enumerate(self.step_labels):
+            if i == 0 and self.sub == "flat":
+                name = "%s ▸ %s" % (name, self.t["step_flat"])
             mark = "✓ " if i in self.done and i != self.page else ("● " if i == self.page else "")
             lab.config(text="%s%d %s" % (mark, i + 1, name), foreground="#1a7f37" if i in self.done and i != self.page else
                        ("#000" if i == self.page else "#888"), font=self.bold if i == self.page else "")
 
-    def show(self, page):
-        self.page = page
+    def show(self, page, sub=None):
+        self.page, self.sub = page, sub
         for w in self.body.winfo_children():
             w.destroy()
-        getattr(self, "page_" + PAGES[page])()
+        getattr(self, "page_" + (sub or PAGES[page]))()
         self.paint_steps()
-        self.back_btn.config(state="normal" if page > 0 and not self.running else "disabled")
+        self.back_btn.config(state="normal" if (page > 0 or sub) and not self.running else "disabled")
         self.update_next()
 
     def heading(self, title, text=""):
@@ -796,7 +909,9 @@ class Assistant:
         t, p = self.t, PAGES[self.page]
         ok = not self.running
         label = t["next"]
-        if p == "game":
+        if self.sub == "flat":
+            ok = ok and self.flat_ready()
+        elif p == "game":
             ok = ok and bool(self.nup_state and self.nup_state[1] and self.nup_state[0] == self.nup_var.get().strip())
         elif p == "options":
             ok = ok and bool(self.out_var.get().strip())
@@ -814,12 +929,20 @@ class Assistant:
             return self.on_close()
         if PAGES[self.page] == "options" and not self.options_ok():
             return
-        self.done.add(self.page)
         self.save_settings()
+        if PAGES[self.page] == "game" and self.sub is None and self.needs_flat():
+            return self.show(0, "flat")   # (a .nup whose game files are compressed: its flat copy first)
+        self.done.add(self.page)
         self.show(self.page + 1)
 
     def back(self):
-        if self.page > 0 and not self.running:
+        if self.running:
+            return
+        if self.sub == "flat":
+            self.show(0)
+        elif PAGES[self.page] == "options" and self.needs_flat():
+            self.show(0, "flat")
+        elif self.page > 0:
             self.show(self.page - 1)
 
     def out(self):
@@ -840,6 +963,7 @@ class Assistant:
         ttk.Button(row, text=t["browse"], command=self.pick_nup).pack(side="left")
         self.nup_note = ttk.Label(self.body, text="", wraplength=760, justify="left")
         self.nup_note.pack(anchor="w", pady=(8, 0))
+        self.nup_damage = ttk.Frame(self.body)   # (corrupt_box: the dump's corrupted or missing files, when it has some)
         self.paint_nup()
         b = built(self.out())
         if b["game"]:
@@ -865,6 +989,49 @@ class Assistant:
             self.nup_note.config(text=self.t["nup_checking"], foreground="#555")
         else:
             self.nup_note.config(text=self.nup_state[2], foreground="#1a7f37" if self.nup_state[1] else "#b42318")
+        found = self.nup_state[3].get("game_files") if self.nup_state and self.nup_state[0] == path else None
+        self.corrupt_box(self.nup_damage, (found or {}).get("corrupted") or [], (found or {}).get("missing") or [])
+
+    def corrupt_box(self, holder, corrupted, missing, shown=8):
+        """(the player's wish, 25/11/2026) A dump's corrupted and missing files, as plainly as "Compression detected": in a red
+        frame, "Corrupted files detected" in bold, how many, which (name and what it is), what it may do in the game, the
+        advice; Next stays possible. holder: a frame of the page, emptied first; nothing in it for a sound dump. shown: the files
+        named at most (0: the compression's page, short, which sends to the game's page for the list)"""
+        if holder is None or not holder.winfo_exists():
+            return
+        for w in holder.winfo_children():
+            w.destroy()
+        if not corrupted and not missing:
+            if holder.winfo_manager():
+                holder.pack_forget()
+            return
+        t = self.t
+        import grapnel_game_files as gf
+        big = ("Segoe UI", 13, "bold") if WINDOWS else ("TkDefaultFont", 13, "bold")
+        box = tk.Frame(holder, highlightthickness=2, highlightbackground="#b42318", highlightcolor="#b42318", padx=10, pady=6)
+        box.pack(fill="x")
+        tk.Label(box, text="⚠ " + t["corrupt_banner"], font=big, fg="#b42318").pack(anchor="w")
+        if corrupted:
+            what = t["corrupt_1"] if len(corrupted) == 1 else t["corrupt_n"].format(n=self.count(len(corrupted)))
+            text = t["corrupt_text"].format(what=what) + (t["corrupt_missing"].format(m=self.count(len(missing))) if missing else "")
+        else:
+            text = t["corrupt_missing_only"].format(m=self.count(len(missing)))
+        if not shown:   # (the compression's page: short, the game's page has the list)
+            tk.Label(box, text=text + " " + t["corrupt_short"], wraplength=740, justify="left").pack(anchor="w")
+            if not holder.winfo_manager():
+                holder.pack(fill="x", pady=(0, 8), after=self.flat_banner)
+            return
+        tk.Label(box, text=text, wraplength=740, justify="left").pack(anchor="w")
+        kinds = t["corrupt_kinds"] or gf.KIND_EN
+        every = [(f, None) for f in corrupted] + [(f, t["corrupt_missing_tag"]) for f in missing]
+        shown = shown if len(every) > shown + 1 else len(every)   # ("and 1 more" would take the line the file takes)
+        rows = ["• %s (%s%s)" % (f.rsplit("/", 1)[-1], kinds[gf.kind_of(f)], ", " + tag if tag else "") for f, tag in every[:shown]]
+        if len(every) > shown:
+            rows.append(t["corrupt_more"].format(k=self.count(len(every) - shown)))
+        tk.Label(box, text="\n".join(rows), justify="left", font=("Consolas", 9) if WINDOWS else ("TkFixedFont", 9)).pack(anchor="w", pady=(2, 2))
+        tk.Label(box, text=t["corrupt_effect"], wraplength=740, justify="left", fg="#7a271a").pack(anchor="w")
+        if not holder.winfo_manager():
+            holder.pack(fill="x", pady=(8, 0), after=self.nup_note if holder is getattr(self, "nup_damage", None) else self.flat_banner)
 
     def pick_nup(self):
         start = os.path.dirname(self.nup_var.get()) if self.nup_var.get() else os.path.expanduser("~")
@@ -885,18 +1052,203 @@ class Assistant:
         def work():
             try:
                 import grapnel_core
-                grapnel_core.check_nup(path)
-                self.events.put(("nup", path, True, self.t["nup_ok"]))
+                facts = {}
+                grapnel_core.check_nup(path, facts)
+                text = self.t["nup_ok"] + (self.t["nup_flat"].format(what=self.flat_what(facts)) if facts.get("flat") else "")
+                self.events.put(("nup", path, True, text, facts))
             except Exception as e:
                 text = self.t["errors"].get(getattr(e, "code", None)) or str(e)
-                self.events.put(("nup", path, False, "✗ " + text))
+                self.events.put(("nup", path, False, "✗ " + text, {}))
         threading.Thread(target=work, daemon=True).start()
 
-    def on_nup(self, path, ok, text):
+    def on_nup(self, path, ok, text, facts=None):
         if path == self.nup_var.get().strip():
-            self.nup_state = (path, ok, text)
+            self.nup_state = (path, ok, text, facts or {})
             self.paint_nup()
             self.update_next()
+
+    # ---- the flat copy (a .nup whose game files are compressed: its own page after the game's) ----
+
+    def needs_flat(self):
+        st = self.nup_state
+        return bool(st and st[1] and st[0] == self.nup_var.get().strip() and st[3].get("flat"))
+
+    def flat_what(self, facts):
+        if facts.get("coded"):
+            return self.t["what_coded"].format(coded=self.count(facts["coded"]), files=self.count(facts["files"]))
+        return self.t["what_framed"]
+
+    def count(self, n):
+        """n with its thousands apart: 40,588 (40 588 in French, a narrow space)"""
+        return "{:,}".format(n).replace(",", "\u202f" if self.lang == "fr" else ",")
+
+    def gb(self, n):
+        """n bytes in GB with one decimal, a comma in French"""
+        text = "%.1f" % (n / 1e9)
+        return text.replace(".", ",") if self.lang == "fr" else text
+
+    def flat_dir(self):
+        d = self.flat_dir_var.get().strip() or self.out() or default_out()
+        return os.path.abspath(d)
+
+    def flat_ready(self):
+        """The copy for this .nup, in the copy's folder, is made and checked (or one made before is there whole)"""
+        f = self.flat_facts
+        return bool(f and f[0] == self.nup_var.get().strip() and f[1] == self.flat_dir() and f[2].get("state") == "done")
+
+    def page_flat(self):
+        t = self.t
+        facts = self.nup_state[3] if self.nup_state else {}
+        # (the player's wish, 25/11/2026: said first, in bold and large, before the explanation, the room and the button)
+        big = ("Segoe UI", 15, "bold") if WINDOWS else ("TkDefaultFont", 15, "bold")
+        self.flat_banner = ttk.Label(self.body, text="⚠ " + t["flat_banner"], font=big, foreground="#b45309")
+        self.flat_banner.pack(anchor="w", pady=(0, 8))
+        self.flat_damage = ttk.Frame(self.body)   # (corrupt_box, short: the game's page has the longer list)
+        found = facts.get("game_files") or {}
+        self.corrupt_box(self.flat_damage, found.get("corrupted") or [], found.get("missing") or [], shown=0)
+        self.heading(t["p_flat"], t["flat_text"].format(what=self.flat_what(facts)))
+        self.flat_cost = ttk.Label(self.body, text="", wraplength=760, justify="left")
+        self.flat_cost.pack(anchor="w", pady=(0, 8))
+        if not self.flat_dir_var.get().strip():
+            self.flat_dir_var.set(self.flat_dir())
+        row = ttk.Frame(self.body)
+        row.pack(fill="x")
+        ttk.Label(row, text=t["flat_dir"]).pack(side="left")
+        ttk.Entry(row, textvariable=self.flat_dir_var).pack(side="left", fill="x", expand=True, padx=8)
+        ttk.Button(row, text=t["browse"], command=self.pick_flat_dir).pack(side="left")
+        self.flat_note = ttk.Label(self.body, text="", wraplength=760, justify="left")
+        self.flat_note.pack(anchor="w", pady=(6, 0))
+        buttons = ttk.Frame(self.body)
+        buttons.pack(anchor="w", pady=8)
+        self.flat_btn = ttk.Button(buttons, text=t["flat_start"], command=self.run_flatten, state="disabled")
+        self.flat_btn.pack(side="left")
+        ttk.Button(buttons, text=t["flat_space_again"], command=self.read_flat).pack(side="left", padx=6)
+        self.flat_discard_btn = ttk.Button(buttons, text=t["flat_discard"], command=self.discard_flat)
+        self.progress_page()
+        if not getattr(self, "flat_trace", None):
+            self.flat_trace = self.flat_dir_var.trace_add("write", lambda *a: self.root.after(400, self.read_flat))
+        if self.running and self.running[0] == "flatten":
+            return
+        self.read_flat()
+
+    def pick_flat_dir(self):
+        p = filedialog.askdirectory(title=self.t["flat_dir"], initialdir=self.flat_dir(), mustexist=False)
+        if p:
+            self.flat_dir_var.set(os.path.normpath(p))
+
+    def read_flat(self):
+        """What the copy's folder holds for this .nup, the room on its disk, the copy's size (read in a thread: the .nup's TOC)"""
+        if not hasattr(self, "flat_note") or not self.flat_note.winfo_exists() or self.sub != "flat":
+            return
+        src, folder = self.nup_var.get().strip(), self.flat_dir()
+        self.flat_note.config(text=self.t["flat_reading"], foreground="#555")
+
+        def work():
+            import grapnel_flat
+            facts = {}
+            try:
+                st = grapnel_flat.state(src, folder)
+                p, _, lay = grapnel_flat.plan(src)
+                p.f.close()
+                facts = {"state": st["kind"], "size": lay.size, "written": st["written"], "dst": st["dst"],
+                         "need": grapnel_flat.need_bytes(lay, st["written"] if st["kind"] == "partial" else 0),
+                         "free": grapnel_flat.free_bytes(folder), "mark": st["mark"]}
+                if st["kind"] == "done":
+                    why = grapnel_flat.reuse_check(st["dst"], st["mark"], lay.toc_sha256)
+                    facts["state"] = "done" if not why else "stale"
+            except Exception as e:   # (the folder cannot be read, the .nup is gone...)
+                facts = {"state": "error", "error": str(e)}
+            self.events.put(("flat_facts", src, folder, facts))
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_flat_facts(self, src, folder, facts):
+        self.flat_facts = (src, folder, facts)
+        self.paint_flat()
+
+    def paint_flat(self):
+        if not hasattr(self, "flat_note") or not self.flat_note.winfo_exists() or not self.flat_facts:
+            return
+        t = self.t
+        src, folder, f = self.flat_facts
+        if src != self.nup_var.get().strip() or folder != self.flat_dir():
+            return
+        state = f.get("state")
+        if state == "error":
+            self.flat_note.config(text="✗ " + f.get("error", ""), foreground="#b42318")
+            self.flat_btn.config(state="disabled")
+            return self.update_next()
+        gb = self.gb(f["size"])
+        self.flat_cost.config(text=t["flat_cost"].format(gb=gb))
+        lines, colour, can = [], "#1a7f37", True
+        made = getattr(self, "flat_made", None)
+        if state == "done" and made and made.get("path") == f["dst"]:   # (made just now, on this page)
+            lines.append(t["flat_made"].format(path=f["dst"], gb=gb, m=minutes(made.get("seconds") or 0),
+                                               n=made.get("unpacked_codec1", 0) + made.get("unpacked_frames", 0)))
+            can = False
+        elif state == "done":
+            lines.append(t["flat_done_before"].format(path=f["dst"], gb=gb))
+            can = False
+        elif state == "other":
+            lines.append(t["flat_other"])
+            colour, can = "#b42318", False
+        else:
+            if state == "partial":
+                lines.append(t["flat_partial"].format(done=self.gb(f["written"]), gb=gb))
+            elif state == "stale":
+                lines.append(t["flat_stale"])
+            need, free = f["need"], f["free"]
+            if free >= need:
+                lines.append(t["flat_space_ok"].format(free=self.gb(free), need=self.gb(need)))
+            else:
+                lines.append(t["flat_space_low"].format(free=self.gb(free), need=self.gb(need), more=self.gb(need - free + 5e7)))
+                colour, can = "#b42318", False
+            if state != "partial" and colour == "#1a7f37":
+                colour = "#333"
+        if state == "done":   # (what the copy read: a .zs that does not start as zstd, a file unlike its record, with the TOC's)
+            mark = f.get("mark") or {}
+            found = (self.nup_state[3].get("game_files") if self.nup_state else None) or {}
+            corrupted = sorted(set(found.get("corrupted") or []) | set(mark.get("not_zstd") or []) |
+                               set((mark.get("damaged") or {}).keys()))   # (the same paths: romfs/..., exefs/...)
+            self.corrupt_box(self.flat_damage, corrupted, found.get("missing") or [], shown=0)
+        if state == "done" and not self.running:   # (nothing to show a bar for: the page's room for the lines above)
+            for w in (self.step_text, self.bar, self.progress_row):
+                w.pack_forget()
+        elif not self.bar.winfo_manager():   # (another folder: the bar back, where it was)
+            self.step_text.pack(anchor="w", pady=(6, 2), before=self.result_text)
+            self.bar.pack(fill="x", pady=4, before=self.result_text)
+            self.progress_row.pack(fill="x", before=self.result_text)
+        self.flat_note.config(text="\n".join(lines), foreground=colour)
+        self.flat_btn.config(state="normal" if can and not self.running else "disabled")
+        if state == "partial" and not self.running:
+            self.flat_discard_btn.pack(side="left")
+        else:
+            self.flat_discard_btn.pack_forget()
+        if state == "done" and hasattr(self, "bar") and self.bar.winfo_exists():
+            self.bar.config(value=1000)
+        self.update_next()
+
+    def discard_flat(self):
+        import grapnel_flat
+        if self.running or not self.flat_facts:
+            return
+        _, part, mark = grapnel_flat.paths_for(self.flat_dir())
+        for f in (part, mark):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        self.read_flat()
+
+    def run_flatten(self):
+        if self.running:
+            return
+        self.save_settings()
+        self.flat_btn.config(state="disabled")
+        self.flat_discard_btn.pack_forget()
+        self.result_text.config(text="")
+        self.bar.config(mode="determinate", value=0)   # (a new copy starts from nothing, whatever the bar showed)
+        self.step_text.config(text="")
+        self.start("flatten", self.command("flatten"))
 
     # ---- page 2: the options ----
 
@@ -982,7 +1334,7 @@ class Assistant:
             ("ok: the ZBIC program", "zbic"), ("ok: clang", "compile"), ("ok: prospero-clang", "compile"),
             ("ok: the shader preparation", "prepare"), ("ok: the .nup", "nup"))
     CODE_ROW = {"llvm": "llvm", "toolchain": "toolchain", "python": "python", "python-icons": "python", "zbic": "zbic",
-                "nup-folder": "nup", "nup-missing": "nup", "nup-not-nup": "nup", "nup-damaged": "nup", "nup-wrong-game": "nup", "nup-compressed": "nup", "prepare-cpu": "prepare",
+                "nup-folder": "nup", "nup-missing": "nup", "nup-not-nup": "nup", "nup-damaged": "nup", "nup-wrong-game": "nup", "nup-codec": "nup", "prepare-cpu": "prepare",
                 "prepare-tool": "prepare", "prepare-platform": "prepare", "prepare-stale": "prepare"}
 
     def page_check(self):
@@ -1087,7 +1439,7 @@ class Assistant:
         self.step_text.pack(anchor="w", pady=(6, 2))
         self.bar = ttk.Progressbar(self.body, mode="determinate", maximum=1000)
         self.bar.pack(fill="x", pady=4)
-        row = ttk.Frame(self.body)
+        row = self.progress_row = ttk.Frame(self.body)
         row.pack(fill="x")
         self.left_text = ttk.Label(row, text="")
         self.left_text.pack(side="left")
@@ -1173,11 +1525,16 @@ class Assistant:
         self.place_radios = {}
         for q in (grapnel_send.INTERNAL, "/mnt/ext1"):
             self.place_radio(q)
-        ttk.Checkbutton(self.body, text=t["console_nup"], variable=self.send_nup_var).pack(anchor="w", pady=(8, 0))
+        flat = self.flat_copy_path()
+        nup_text = t["console_nup"] if not flat else t["console_nup_flat"].format(gb=self.gb(os.path.getsize(flat)))
+        ttk.Checkbutton(self.body, text=nup_text, variable=self.send_nup_var).pack(anchor="w", pady=(8, 0))
         self.send_btn = ttk.Button(self.body, text=t["console_send"], command=self.console_send, state="disabled")
         self.send_btn.pack(anchor="w", pady=8)
         self.progress_page()
         ttk.Label(self.body, text=t["console_manual"], wraplength=760, justify="left", foreground="#555").pack(anchor="w", pady=(14, 4))
+        if flat:
+            ttk.Label(self.body, text=t["console_manual_flat"].format(path=flat), wraplength=760, justify="left",
+                      foreground="#9a6700").pack(anchor="w", pady=(0, 4))
         row = ttk.Frame(self.body)
         row.pack(anchor="w")
         ttk.Button(row, text=t["open_out"], command=self.open_out).pack(side="left")
@@ -1188,6 +1545,14 @@ class Assistant:
             self.console_test()
         if self.running and self.running[0] == "console":
             self.send_btn.config(state="disabled")
+
+    def flat_copy_path(self):
+        """The flat copy the console gets, when the .nup's game files are compressed and the copy is made (else None)"""
+        if not self.needs_flat():
+            return None
+        import grapnel_flat
+        st = grapnel_flat.state(self.nup_var.get().strip(), self.flat_dir())
+        return st["dst"] if st["kind"] == "done" else None
 
     def place_name(self, place):
         return self.t["place_internal"] if place == grapnel_send.INTERNAL else self.t["place_ext"].format(vol=place)
@@ -1263,11 +1628,16 @@ class Assistant:
         self.update_next()
         keep_awake(True)
         self.add_log("console: sending to %s, %s" % (ip, place))
-        threading.Thread(target=self.console_worker, args=(ip, out, nup, self.ftpsrv_elf(), place), daemon=True).start()
+        threading.Thread(target=self.console_worker, args=(ip, out, nup, self.ftpsrv_elf(), place, self.flat_dir()),
+                         daemon=True).start()
 
-    def console_worker(self, ip, out, nup, elf, place=grapnel_send.INTERNAL):
+    def console_worker(self, ip, out, nup, elf, place=grapnel_send.INTERNAL, flat_dir=None):
         t, put = self.t, self.events.put
         try:
+            if nup:   # (a .nup whose game files are compressed: its flat copy, which the console reads)
+                nup, note = grapnel_send.console_game_file(nup, out, flat_dir)
+                if note:
+                    put(("line", "console: " + note))
             found = grapnel_send.probe(ip)
             if not found["ftp"]:
                 if not (found["elfldr"] and elf):
@@ -1386,10 +1756,12 @@ class Assistant:
                 cmd += ["--" + opt, p[opt]]
         if self.args.lock:
             cmd += ["--lock", self.args.lock]
+        if kind == "flatten":
+            return cmd + ["--flatten", "--nup", self.nup_var.get().strip(), "--flat-dir", self.flat_dir()]
         if kind == "check":
-            cmd += ["--check", "--nup", self.nup_var.get().strip()]
+            cmd += ["--check", "--nup", self.nup_var.get().strip(), "--flat-dir", self.flat_dir()]
             return cmd + ([] if self.can_prepare else ["--no-prepare"])
-        cmd += ["--nup", self.nup_var.get().strip(), "--out", self.out()]
+        cmd += ["--nup", self.nup_var.get().strip(), "--out", self.out(), "--flat-dir", self.flat_dir()]
         if not self.icons_var.get():
             cmd.append("--no-prompts")
         try:
@@ -1548,6 +1920,20 @@ class Assistant:
         if not hasattr(self, "bar") or not self.bar.winfo_exists() or not self.running:
             return
         t = self.t
+        if self.running[0] == "flatten":   # (the flat copy: its own measure, written then read back)
+            if fraction is not None:
+                self.bar.config(mode="determinate", value=int(fraction * 1000))
+                elapsed = time.time() - self.running[1]
+                if fraction >= 0.02 and elapsed >= 5:
+                    left = elapsed * (1 - fraction) / fraction
+                    self.left_text.config(text=t["left_soon"] if left < 60 else t["left"].format(m=minutes(left)))
+            if text and hasattr(self, "step_text") and self.step_text.winfo_exists():
+                for k, v in t["flat_progress"].items():   # (the core's words, in the window's language)
+                    text = text.replace(k, v)
+                if self.lang == "fr":
+                    text = re.sub(r"(\d)\.(\d)", r"\1,\2", text)
+                self.step_text.config(text=text)
+            return
         if self.core_step == PREPARE_STEP:   # (the shaders: the renderer's own measure of what is left)
             if fraction is not None:
                 self.bar.config(mode="determinate", value=int(fraction * 1000))
@@ -1582,7 +1968,20 @@ class Assistant:
         if self.cancelled:
             self.cancelled = False
             self.say_result(t["cancelled"], "#555")
+            if kind == "flatten":   # (a stopped copy: said as started, it carries on)
+                self.read_flat()
             return self.update_next()
+        if kind == "flatten" and rc == 0 and self.result:
+            r = self.result.get("summary") or {}
+            if not r.get("reused"):
+                self.flat_made = dict(r, path=self.result.get("path", ""))
+            if hasattr(self, "bar") and self.bar.winfo_exists():
+                self.bar.config(mode="determinate", value=1000)
+                self.left_text.config(text="")
+            self.read_flat()
+            return self.update_next()
+        if kind == "flatten":
+            self.read_flat()
         if kind == "check":
             err = self.last_error or {}
             ok = rc == 0 and self.result is not None and not self.check_problems
@@ -1661,6 +2060,11 @@ class Assistant:
             lines.append("llvm: %s; toolchain: %s; prepared: %s" % (m.get("llvm"), m.get("toolchain"), m.get("prepared")))
         except (OSError, ValueError, KeyError):
             pass
+        found = (self.nup_state[3].get("game_files") if self.nup_state else None) or {}
+        if found.get("reference"):   # (the dump against a sound dump's reference: corrupted and missing files)
+            lines.append("game file: %d files checked against %s: %d corrupted, %d missing, %d not in the reference" % (
+                found["checked"], found["reference"], len(found["corrupted"]), len(found["missing"]), found["unknown"]))
+            lines += ["  corrupted: " + f for f in found["corrupted"][:40]] + ["  missing: " + f for f in found["missing"][:40]]
         if self.last_error:
             lines.append("error: %s: %s" % (self.last_error.get("code"), self.last_error.get("message")))
             lines += (self.last_error.get("details") or "").splitlines()[-12:]

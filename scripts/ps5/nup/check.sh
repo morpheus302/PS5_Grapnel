@@ -5,6 +5,8 @@
 #   check.sh nnfs <file.nup> <romfs>       nnfs_check: host/nn_fs.c's own entry points over both, mods included
 #   check.sh hashlist <file.nup> <romfs> <out>   the platform probe's list (game-derived: keep it in hookshot-ps5/)
 #   check.sh probe <file.nup> <list>       the platform probe's own nup check (plat-probe/probe_nup.c) on this PC
+#   check.sh same <reference.nup> <other.nup>   nup_same: two packages read through the layer, file by file (a dump and the
+#                                          builder's flat copy of another: scripts/grapnel-builder/grapnel_flat.py)
 # nnfs_check compiles host/nn_fs.c, mods.c, nup_fs.c and posix/win32_posix.c as the Linux build does; the guest model's
 # headers come from a build's work folder: RT64 (work/sa/build-ps5/rt64) and GEN (work/sa/gen), by default wt/ps5-port's.
 # THREADS (4), nice 10.
@@ -31,6 +33,11 @@ build() {
     nice -n 10 "$cc" "${objs[@]}" -lpthread -ldl -lm -o "$out/nnfs_check"
     nice -n 10 "$cc" -O2 -g -Wall -Wextra -D_GNU_SOURCE -I"$root/host" -I"$root/scripts/ps5/plat-probe" "$root/scripts/ps5/nup/probe_nup_pc.c" \
         "$root/scripts/ps5/plat-probe/probe_nup.c" "$root/host/nup_fs.c" -lpthread -o "$out/probe_nup_pc"
+    build_same
+}
+build_same() {   # (nup_same alone: no build's work folder needed)
+    nice -n 10 "$cc" -O2 -g -Wall -Wextra -D_GNU_SOURCE -I"$root/host" "$root/scripts/ps5/nup/nup_same.c" "$root/host/nup_fs.c" \
+        -lpthread -o "$out/nup_same"
 }
 export TMPDIR=${TMPDIR_NNFS:-$out}   # (nnfs_check's test mod: made and removed there)
 case ${1:-build} in
@@ -39,5 +46,6 @@ case ${1:-build} in
     nnfs) build; nice -n 10 "$out/nnfs_check" "$2" "$3" --threads "${THREADS:-4}" ;;
     hashlist) build; nice -n 10 "$out/nup_check" --hashlist "$2" "$3" "$4" ;;
     probe) build; nice -n 10 "$out/probe_nup_pc" "$2" "$3" "${THREADS:-4}" "${SECONDS_NUP:-5}" ;;
+    same) build_same; nice -n 10 "$out/nup_same" "$2" "$3" --threads "${THREADS:-4}" ;;
     *) sed -n '2,10p' "$0"; exit 2 ;;
 esac

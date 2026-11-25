@@ -58,7 +58,7 @@ Grapnel is published before it is finished, so that others can help.
 - **Your own copy of the game**, dumped from your own console, as a `.nup` file (game version 131072). About 26 GB.
 - **A PC with Windows 10 or 11 (64-bit), or Linux on x86-64**, for the builder, with a processor that has AVX2 (x86-64-v3):
   8 GB of memory at the least (16 GB is much faster), about 12 GB of free disk space besides the game file.
-  - **Windows:** `Grapnel-Builder-0.2.4-windows-x64.zip` from this repository's
+  - **Windows:** `Grapnel-Builder-0.2.5-windows-x64.zip` from this repository's
     [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) page: a folder with everything in it (its LLVM, Python,
     the console toolchain), nothing to install.
   - **Linux:** **LLVM 19.1.7**, git and Python 3.12 or newer, and **the console toolchain**,
@@ -67,7 +67,7 @@ Grapnel is published before it is finished, so that others can help.
 
 ### Build it on Windows
 
-1. Unpack the whole `Grapnel-Builder-0.2.4-windows-x64.zip` (right click, "Extract All...") into a folder of yours with a
+1. Unpack the whole `Grapnel-Builder-0.2.5-windows-x64.zip` (right click, "Extract All...") into a folder of yours with a
    short path, `C:\Grapnel-Builder` for instance. Nothing to install, no administrator rights.
 2. Start `Grapnel.exe`. It is not signed: if Windows says "Windows protected your PC", click **More info**, then **Run
    anyway**. An antivirus may scan or block the builder's programs (`clang.exe`, `ld.lld.exe`, `zbic_unpack.exe`,
@@ -141,7 +141,12 @@ The window's step 6 does steps 1 and 2 over FTP (see [Build it on Windows](#buil
 
 1. Copy `<output>/homebrew/GRPN00001/` (with its `radv-shader-cache/`) to **`/data/homebrew/GRPN00001/`**.
 2. Copy `<output>/data/grapnel/` to **`/data/grapnel/`**, and your game file into it, as it is, as
-   **`/data/grapnel/game.nup`**.
+   **`/data/grapnel/game.nup`**. **If the builder said your dump keeps game files compressed** (some dumpers do: the
+   console cannot read those files, and the game would stop as Play is pressed), it made a flat copy of it, once, on your
+   PC (`<output>/game.nup` by default, about 25.3 GB, checked file by file): copy **that copy**, not your dump. The
+   window's step 6 sends it by itself; `<output>/INSTALL.en.txt` names the file. **Corrupted files detected**: the builder
+   also compares your dump's files with a sound dump's (from the fingerprints the `.nup` holds) and names those your dump tool
+   read wrong or left out; the game may miss a texture or a sound there, or stop: dump the game again if you can.
 3. Register the title (ShadowMountPlus does it, or your usual homebrew tool; the title's `sce_sys/` must already hold its
    icon and pictures when it is registered: the home screen copies them then), then start **Grapnel** from the home screen.
 4. Keep the ELF loader running: at start the title sends its storage broker to it (port 9021), which makes its large
@@ -301,7 +306,7 @@ Grapnel est publié avant d'être fini, pour que d'autres puissent aider.
 - **Votre propre copie du jeu**, extraite de votre propre console, en fichier `.nup` (version 131072 du jeu). Environ 26 Go.
 - **Un PC sous Windows 10 ou 11 (64 bits), ou sous Linux x86-64**, pour le constructeur, avec un processeur qui a l'AVX2
   (x86-64-v3) : 8 Go de mémoire au moins (16 Go, c'est bien plus rapide), environ 12 Go libres en plus du fichier du jeu.
-  - **Windows :** `Grapnel-Builder-0.2.4-windows-x64.zip`, sur la page
+  - **Windows :** `Grapnel-Builder-0.2.5-windows-x64.zip`, sur la page
     [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) de ce dépôt : un dossier qui contient tout (son LLVM,
     Python, la chaîne d'outils console), rien à installer.
   - **Linux :** **LLVM 19.1.7**, git et Python 3.12 ou plus récent, et **la chaîne d'outils console**,
@@ -310,7 +315,7 @@ Grapnel est publié avant d'être fini, pour que d'autres puissent aider.
 
 ### Construire sous Windows
 
-1. Décompressez tout `Grapnel-Builder-0.2.4-windows-x64.zip` (clic droit, « Extraire tout… ») dans un dossier à vous au
+1. Décompressez tout `Grapnel-Builder-0.2.5-windows-x64.zip` (clic droit, « Extraire tout… ») dans un dossier à vous au
    chemin court, par exemple `C:\Grapnel-Builder`. Rien à installer, pas de droits d'administrateur.
 2. Lancez `Grapnel.exe`. Il n'est pas signé : si Windows affiche « Windows a protégé votre ordinateur », cliquez sur
    **Informations complémentaires**, puis **Exécuter quand même**. Un antivirus peut examiner ou bloquer les programmes du
@@ -390,7 +395,13 @@ main :
 
 1. Copiez `<sortie>/homebrew/GRPN00001/` (avec son `radv-shader-cache/`) dans **`/data/homebrew/GRPN00001/`**.
 2. Copiez `<sortie>/data/grapnel/` dans **`/data/grapnel/`**, et votre fichier du jeu dedans, tel quel, sous le nom
-   **`/data/grapnel/game.nup`**.
+   **`/data/grapnel/game.nup`**. **Si le constructeur a dit que votre dump garde des fichiers du jeu compressés** (certains
+   outils de dump le font : la console ne sait pas lire ces fichiers, et le jeu s'arrêterait en appuyant sur Jouer), il en
+   a fait une copie à plat, une fois, sur votre PC (`<sortie>/game.nup` par défaut, environ 25,3 Go, vérifiée fichier par
+   fichier) : copiez **cette copie**, pas votre dump. L'étape 6 de la fenêtre l'envoie d'elle-même ;
+   `<sortie>/INSTALL.fr.txt` nomme le fichier. **Fichiers corrompus détectés** : le constructeur compare aussi les fichiers de
+   votre dump à ceux d'un dump sain (d'après les empreintes que porte le `.nup`) et nomme ceux que votre outil de dump a mal lus
+   ou oubliés ; le jeu peut y manquer d'une texture ou d'un son, ou s'arrêter : refaites le dump si vous le pouvez.
 3. Enregistrez le titre (ShadowMountPlus le fait, ou votre outil homebrew habituel ; le `sce_sys/` du titre doit déjà
    contenir son icône et ses images à ce moment : l'accueil les copie alors), puis lancez **Grapnel** depuis l'accueil.
 4. Laissez tourner le chargeur d'ELF : au démarrage, le titre lui envoie son courtier d'écriture (port 9021), qui rend ses

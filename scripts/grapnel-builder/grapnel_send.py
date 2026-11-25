@@ -32,7 +32,12 @@ last, eboot.bin at its very end, so that ShadowMountPlus (which registers what i
 stopped changing) never sees half a title.
 
     python3 grapnel_send.py --host <console address> --out <output folder> [--nup F] [--place internal|/mnt/ext1]
-                            [--probe] [--root R] [--port N]
+                            [--flat-dir D] [--probe] [--root R] [--port N]
+
+The game file sent is the one the console can read: the .nup itself, or, when its game files are stored compressed (some
+dumpers'), the flat copy the builder made of it (grapnel_flat.py: in the output folder, or --flat-dir, or where the build's
+manifest.json says): console_game_file(). A compressed .nup whose copy is not made is not sent (the console would stop as Play
+is pressed).
 
 (--root: a folder of this PC standing for the console's /, for tests against a local FTP server.)
 """
@@ -79,6 +84,34 @@ class SendError(Exception):
 
 class Cancelled(SendError):
     pass
+
+
+def console_game_file(nup, out, flat_dir=None):
+    """The game file the console is given for the player's .nup: (path, note). A normal .nup: itself. One whose game files are
+    stored compressed: the flat copy the builder made of it (grapnel_flat.py), in flat_dir, where the build's manifest.json says,
+    or in the output folder. SendError when there is none: the console cannot read the .nup itself"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:   # (python -I leaves the script's folder off)
+        sys.path.insert(0, here)
+    import grapnel_flat
+    if not grapnel_flat.needs_flat(grapnel_flat.inspect(nup)):
+        return nup, ""
+    folders = [flat_dir] if flat_dir else []
+    try:
+        with open(os.path.join(out, "manifest.json"), encoding="utf-8") as f:
+            g = json.load(f).get("game_file") or {}
+        if g.get("flat") and g.get("path"):
+            folders.append(os.path.dirname(g["path"]))
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    folders.append(out)
+    for d in folders:
+        if d:
+            st = grapnel_flat.state(nup, d)
+            if st["kind"] == "done":
+                return st["dst"], "the .nup keeps game files compressed: its flat copy %s is sent in its place" % st["dst"]
+    raise SendError("%s keeps game files compressed, which the console cannot read, and its flat copy is not made: make it first "
+                    "(the window's step after the game, or grapnel_build.py --flatten --nup <it> --flat-dir <folder>)" % nup)
 
 
 def probe(host, timeout=3.0, port=FTP_PORT):
@@ -545,12 +578,18 @@ def main():
     ap.add_argument("--out", help="the builder's output folder")
     ap.add_argument("--nup", help="the game file, sent as the place's game.nup when it is not there with its size")
     ap.add_argument("--place", default=INTERNAL, choices=PLACES, help="where the title and the game file go (default: internal)")
+    ap.add_argument("--flat-dir", help="where the flat copy of a .nup whose game files are compressed is (default: where the build "
+                    "put it)")
     ap.add_argument("--root", default="", help="(tests) a local folder standing for the console's /")
     ap.add_argument("--probe", action="store_true")
     a = ap.parse_args()
     if a.probe:
         print(probe(a.host))
         return 0
+    if a.nup:   # (a .nup whose game files are compressed: its flat copy, which the console reads)
+        a.nup, note = console_game_file(a.nup, a.out, a.flat_dir)
+        if note:
+            print(note)
     c = Console(a.host, a.port, a.root)
     try:
         p = plan(c, a.out, a.nup, a.place)

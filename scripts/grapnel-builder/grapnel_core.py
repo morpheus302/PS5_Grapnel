@@ -5,6 +5,8 @@ front end (grapnel_build.py, the command line; a window later) gives it Options 
     from grapnel_core import Builder, Options, Events, BuildError
     b = Builder(Options(nup=..., out=..., toolchain=...), events)
     b.check()            # the tools, no game: LLVM 19.1.7, the console toolchain, Python's packages, the ZBIC program
+    b.flatten()          # (a .nup whose game files are stored compressed only) its flat copy, which the console is given
+                         # (grapnel_flat.py: made once, checked; taken again by the next builds)
     b.read()             # 1. the .nup checked, the game's program and the icons' files read out of it
     b.translate()        # 2. the program translated to C
     b.compile()          # 3. compiled, linked, signed: the title folder in the work folder; imports, stamp, memory checked
@@ -55,7 +57,7 @@ if NX2 not in sys.path:
     sys.path.insert(0, NX2)
 import toolchain_ps5  # noqa: E402  (only os and subprocess: where the SDK and PS5_Vulkan are, the title's id and name)
 
-VERSION = "0.2.4"
+VERSION = "0.2.5"
 # (the shader preparation for the PC this builder takes at the least: 0.3's gate never stops for memory on a PC, and its workers follow
 # the memory; with 0.2's, a PC with ~3.5 GB available stopped at item 0 until the builder gave up, exit 13, 25/11/2026)
 # (0.4: its driver flushes with CLFLUSH on a PC: with 0.3's, a CPU without CLFLUSHOPT (Intel before Skylake, AMD before Zen) stopped
@@ -178,6 +180,7 @@ class Options:
     no_shaders: bool = False         # no list of the game's shaders, so no preparation: the game compiles them in play
     no_prepare: bool = False         # the lists, but no preparation on this PC (a toolchain without prepare/): the game compiles in play
     prepare_workers: int = 0         # the preparation's compile threads (0: every core; the memory free decides how many work)
+    flat_dir: str = ""               # where the flat copy of a .nup whose game files are compressed goes (default: out)
 
 
 class Events:
@@ -762,8 +765,11 @@ def name_prefix():
     return m.group(1) if m else "hookshot"
 
 
-def check_nup(path):
-    """The .nup is a NUP package whose newest title is the supported game's update: (title id, version), or BuildError"""
+def check_nup(path, facts=None):
+    """The .nup is a NUP package whose newest title is the supported game's update: (title id, version), or BuildError. facts (a
+    dict, when given) gets what grapnel_flat.inspect_title says of its compressed files: a .nup that keeps game files compressed
+    (codec 1, or zstd frames of themselves) is taken, and the console is given its flat copy (Builder.flatten); and what
+    grapnel_game_files.check says of its files against the reference of a sound dump (from the TOC alone: corrupted, missing)"""
     if os.path.isdir(path):
         raise BuildError("nup-folder", "%s is a folder. Grapnel %s is built from the game's .nup file only (the console dump the "
                          "port reads as game.nup), not from unpacked exefs/ or romfs/ folders." % (path, VERSION))
@@ -775,54 +781,55 @@ def check_nup(path):
         raise BuildError("nup-not-nup", "%s is not a .nup package (it starts %r). Grapnel %s is built from the game's .nup only."
                          % (path, magic, VERSION))
     import nup
+    import grapnel_flat
+    import grapnel_game_files
     try:
         p = nup.Nup(path)
     except SystemExit as e:   # (nup.py says an incomplete package this way)
         raise BuildError("nup-damaged", "%s: %s" % (path, e))
+    info = files = None
     try:
         t = nup.pick_title(p, None)
         found = ", ".join("%016X v%d" % (x["id"], x["version"]) for x in p.titles)
         if t["id"] in GAME_TITLE_IDS and t["version"] == GAME_VERSION:
-            coded, framed, sampled = nup_console_unreadable(p, t)
+            info = grapnel_flat.inspect_title(p, t)
+            if facts is not None:   # (0.6 s: only when asked)
+                files = grapnel_game_files.check(p, t)
     finally:
         p.f.close()
     if t["id"] not in GAME_TITLE_IDS or t["version"] != GAME_VERSION:
         raise BuildError("nup-wrong-game", "this .nup holds %s, its newest title %016X v%d. Grapnel is made from %s (title %016X v%d) "
                          "and no other game or version." % (found, t["id"], t["version"], GAME_NAME, GAME_TITLE_ID, GAME_VERSION))
-    if coded or framed:
-        raise BuildError("nup-compressed", "this .nup keeps game files compressed (%s): the console reads the game file in place, and "
-                         "Grapnel %s cannot open compressed ones there yet, so the game could not start. Some dumpers "
-                         "write the game's files this way; a version of Grapnel that reads them is being worked on."
-                         % ("%d files stored zstd-compressed" % coded if coded else
-                            "%d of %d files sampled are zstd frames of themselves" % (framed, sampled), VERSION))
+    # (0.2.3 refused a .nup whose game files are compressed, "nup-compressed": the console reads the game file in place and opens
+    # no compressed file, and a player's game stopped as Play was pressed, its log showing 40,588 files stored with codec 1 and
+    # the game's first file, Pack/ZsDic.pack.zs, not opened (25/11/2026). Now the console is given a flat copy instead:
+    # Builder.flatten)
+    if info["unknown_codec"]:
+        raise BuildError("nup-codec", "this .nup stores %d game files with a codec the builder does not know (neither as they are nor "
+                         "zstd): it cannot be read. Dump the game again with another dumper." % info["unknown_codec"])
+    if facts is not None:
+        facts.update(info, id=t["id"], version=t["version"], flat=grapnel_flat.needs_flat(info), game_files=files)
     return t["id"], t["version"]
 
 
-def nup_console_unreadable(p, t):
-    """What the console's game file reader (host/nup_fs.c, which reads the package in place) cannot open in the title's romfs:
-    files stored with a codec (1: zstd, or one it does not know), and a package whose files are zstd frames of themselves with
-    codec 0 (a newer dumper's, nx2/nup.py is_packed), found as the console finds it: 64 files spread over the tree, not .zs ones
-    (those are zstd in the game too). The console cannot open those files, so the game cannot start. (The likely cause, not
-    confirmed by its log, of a player's CE-108255-1 as Play was pressed on 25/11/2026: a dump from another dumper that built.)
-    -> (files with a codec, framed files among those sampled, files sampled)"""
-    import nup
-    if t["romfs"] == 0xffffffff:
-        return 0, 0, 0
-    files = list(p.walk(t["romfs"]))
-    coded = sum(1 for _, r in files if r[5] != 0)
-    step = max(1, len(files) // 64)
-    sampled = framed = 0
-    for i in range(0, len(files), step):
-        if sampled >= 64:
-            break
-        for rel, r in files[i:i + step]:
-            if r[5] != 0 or r[2] < 18 or rel.endswith(".zs"):
-                continue
-            p.f.seek(r[3])
-            sampled += 1
-            framed += nup.frame_content_size(p.f.read(18)) == r[2]
-            break
-    return coded, framed, sampled
+CORRUPT_BANNER = "==== Corrupted files detected ===="   # (the player's wish, 25/11/2026: a dump's corrupted or missing files
+                                                        # said first and plainly; the window: "Corrupted files detected" /
+                                                        # "Fichiers corrompus détectés" in bold)
+FLAT_BANNER = "==== Compression detected ===="   # (what a .nup whose game files are compressed is first said with: the window's
+                                                  # page says "Compression detected" / "Compression détectée" in bold at its top)
+
+
+def console_game_file(nup_path, flat_dir):
+    """The game file the console is given for this .nup: (path, flat, why). A normal .nup: itself. One whose game files are stored
+    compressed: its flat copy in flat_dir (grapnel_flat.py) when it is made and whole, else (None, True, what is missing)"""
+    import grapnel_flat
+    if not grapnel_flat.needs_flat(grapnel_flat.inspect(nup_path)):
+        return nup_path, False, ""
+    st = grapnel_flat.state(nup_path, flat_dir)
+    if st["kind"] == "done":
+        return st["dst"], True, ""
+    return None, True, ("its flat copy is not made yet in %s (grapnel_build.py --flatten, or the window's step after the game)"
+                        % flat_dir)
 
 
 EXTRACT_PROMPTS = r"""
@@ -1015,6 +1022,10 @@ class Builder:
         self.shader_files = None
         self.prep_tool = None
         self.prepared = None
+        self.o.flat_dir = os.path.abspath(self.o.flat_dir) if self.o.flat_dir else self.o.out
+        self.game_file = None        # (what the console is given: the .nup, or its flat copy; flatten() says)
+        self.files_found = None      # (the dump's files against the sound dump's reference: say_files)
+        self.flat = None             # (the flat copy's summary, when one was made or taken again)
 
     # ---- running the port's tools ----
 
@@ -1170,6 +1181,54 @@ class Builder:
             raise BuildError("disk", "the work folder's disk has %.1f GB free: the build wants ~8 GB (the translated C 1.5 GB, objects, "
                              "the link, the title)" % free)
         return free
+
+    # ---- the flat copy (a .nup whose game files are stored compressed) ----
+
+    def flatten(self, cancel=None):
+        """The game file the console is given: the .nup itself, or, when its game files are stored compressed (codec 1, or frames
+        of themselves), its flat copy in the flat folder (grapnel_flat.py), made once and taken again by the next builds. -> the
+        game file's path"""
+        import grapnel_flat
+        facts = {}
+        check_nup(self.o.nup, facts)
+        self.say_files(facts.get("game_files"))
+        if not facts["flat"]:
+            self.game_file, self.flat = self.o.nup, None
+            return self.game_file
+        if not self.o.flat_dir:
+            raise BuildError("options", "the folder for the game file's flat copy (or the output folder) is needed")
+        what = ("%d of its %d game files are stored zstd-compressed (codec 1)" % (facts["coded"], facts["files"]) if facts["coded"] else
+                "its game files are stored as zstd frames of themselves (%d of %d sampled)" % (facts["framed"], facts["sampled"]))
+        self.ev.info(FLAT_BANNER)   # (the player's wish: said first, plainly)
+        self.ev.info("the .nup keeps game files compressed: %s. The console reads the game file in place and opens no compressed "
+                     "file: it is given a flat copy of the game, made on this PC, in %s" % (what, self.o.flat_dir))
+        self.ev.progress(0.0, "the flat copy")
+        try:
+            self.flat = grapnel_flat.convert(self.o.nup, self.o.flat_dir, progress=self.ev.progress, info=self.ev.info, cancel=cancel)
+        except grapnel_flat.FlatError as e:
+            raise BuildError(e.code, e.message)
+        self.game_file = self.flat["path"]
+        return self.game_file
+
+    def say_files(self, found):
+        """The dump's files against the sound dump's reference (grapnel_game_files: from its TOC): corrupted and missing ones
+        said first, plainly, with what to do; the build goes on (the game may then miss a texture, a sound, or stop where it
+        uses one). Nothing for a sound dump"""
+        import grapnel_game_files
+        self.files_found = found
+        if not found or not found.get("reference"):
+            return
+        if not (found["corrupted"] or found["missing"]):
+            self.ev.info("ok: the .nup's %d game files are those of a sound dump (their SHA-256 in its TOC; %d more not in the "
+                         "reference, not a fault)" % (found["checked"], found["unknown"]))
+            return
+        self.ev.info(CORRUPT_BANNER)
+        self.ev.info("%d game files of the .nup are not the game's (their SHA-256 in its TOC is not a sound dump's) and %d are "
+                     "missing:" % (len(found["corrupted"]), len(found["missing"])))
+        for line in grapnel_game_files.lines(found):
+            self.ev.info(line)
+        self.ev.info("Where the game uses one, a texture, a sound or a voice may be missing, or the game may stop. Dump the game "
+                     "again if you can (or copy it again from the console). The build goes on.")
 
     # ---- 1. the game's program, from the .nup alone ----
 
@@ -1673,7 +1732,16 @@ class Builder:
         icons = self.icons_dir is not None
         prepared = self.prepared is not None
         progress_name = name_prefix() + "_prepare_progress.txt"
-        fill = {"v": VERSION, "id": title_id, "data": self.data_name, "env": env_name,
+        if self.game_file is None:
+            self.flatten()
+        game_gb = "%.1f" % (os.path.getsize(self.game_file) / 1e9)
+        if self.flat:
+            game_en = GAME_FLAT_EN % {"path": self.game_file, "gb": game_gb, "data": self.data_name}
+            game_fr = GAME_FLAT_FR % {"path": self.game_file, "gb": game_gb.replace(".", ","), "data": self.data_name}
+        else:
+            game_en = GAME_AS_IS_EN % {"gb": game_gb, "data": self.data_name}
+            game_fr = GAME_AS_IS_FR % {"gb": game_gb.replace(".", ","), "data": self.data_name}
+        fill = {"v": VERSION, "id": title_id, "data": self.data_name, "env": env_name, "game_en": game_en, "game_fr": game_fr,
                 "icons": (", prompts/" if icons else "") + (", " + progress_name if prepared else ""),
                 "prep_en": (PREP_EN if prepared else NO_PREP_EN) % {"id": title_id},
                 "prep_fr": (PREP_FR if prepared else NO_PREP_FR) % {"id": title_id}}
@@ -1703,12 +1771,25 @@ class Builder:
                     "title_art": self.art, "lift_env": LIFT_ENV, "llvm": self.tool_notes.get("llvm"),
                     "shaders": None if self.shader_files is None else {k: v for k, v in self.shader_files.items() if not k.endswith("_path")},
                     "prepared": self.prepared,
+                    "game_file": {"path": self.game_file, "bytes": os.path.getsize(self.game_file), "source": self.o.nup,
+                                  "flat": self.flat is not None, **self.files_note(),
+                                  "flat_copy": None if self.flat is None else {k: v for k, v in self.flat.items() if k != "path"}},
                     "toolchain": self.tool_notes.get("toolchain"),
                     "steps": [{"step": s, "seconds": round(t), "peak_pss_mib": None if p is None else round(p)} for s, t, p in self.times],
                     "files": files}
         with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
         return manifest
+
+    def files_note(self):
+        """For manifest.json: the dump's corrupted and missing files (against the reference, and those the flat copy found)"""
+        found = self.files_found or {}
+        corrupted = set(found.get("corrupted") or [])
+        if self.flat:   # (what the conversion read: a .zs that does not start as zstd, a file unlike its record)
+            corrupted |= set(self.flat.get("not_zstd") or []) | set(self.flat.get("damaged_files") or [])
+        return {"reference": found.get("reference"), "corrupted": len(corrupted), "missing": len(found.get("missing") or []),
+                "not_in_reference": found.get("unknown"), "corrupted_files": sorted(corrupted)[:500],
+                "missing_files": list(found.get("missing") or [])[:500]}   # (the lists: 500 at most, the counts whole)
 
     # ---- all of it ----
 
@@ -1719,6 +1800,7 @@ class Builder:
         free = self._need_work()
         self.ev.info("work folder %s (%.0f GB free); compiles at once %d%s" % (self.o.work, free, self.o.jobs,
                                                                              ", memory %.1f GB" % self.o.memory if self.o.memory else ""))
+        self.flatten()
         self.read()
         self.translate()
         self.compile()
@@ -1752,12 +1834,23 @@ PS5 only: the PS5 Pro was never tried.
    image.bin%(icons2)s
    into /data/hookshot instead (keep your own %(env)s there). Grapnel's first start renames /data/hookshot to /data/%(data)s,
    saves and all (nothing copied); a /data/%(data)s made beforehand would be taken instead, and your saves left behind.
-3. Your game file  ->  /data/%(data)s/game.nup   (the same .nup you built from, as it is: 25.6 GB).
+3. %(game_en)s
 4. Start Grapnel from the home screen.
 %(prep_en)s
 eboot.bin and image.bin go together: after every new build, copy both again.
 """
 
+GAME_AS_IS_EN = """Your game file  ->  /data/%(data)s/game.nup   (the same .nup you built from, as it is: %(gb)s GB)."""
+GAME_FLAT_EN = """Your game file  ->  /data/%(data)s/game.nup: NOT the .nup you built from, but the flat copy the builder made of it:
+   %(path)s   (%(gb)s GB). Your dump keeps game files compressed, which the console cannot read: the game would stop as
+   Play is pressed. The copy is the same game with every file as itself. Copy it, not your dump (on an extension disk:
+   /mnt/ext1/%(data)s/game.nup). Keep it for the next builds: they take it again."""
+GAME_AS_IS_FR = """Votre fichier du jeu  ->  /data/%(data)s/game.nup   (le même .nup que celui de la construction, tel quel : %(gb)s Go)."""
+GAME_FLAT_FR = """Votre fichier du jeu  ->  /data/%(data)s/game.nup : PAS le .nup de la construction, mais la copie à plat que le
+   constructeur en a faite : %(path)s   (%(gb)s Go). Votre dump garde des fichiers du jeu compressés, que la console ne
+   sait pas lire : le jeu s'arrêterait en appuyant sur Jouer. La copie est le même jeu, chaque fichier tel quel. Copiez-la,
+   elle, pas votre dump (sur un disque d'extension : /mnt/ext1/%(data)s/game.nup). Gardez-la pour les prochaines
+   constructions : elles la reprennent."""
 PREP_EN = """   The game's shaders are prepared already: homebrew/%(id)s/radv-shader-cache/ is the console driver's shader cache, made
    on this PC, so that the game does not stop to compile them as you play. The console prepares nothing: the launch screen
    only checks the cache at start (its SHADERS page says "Ready"); a pipeline no list knows is still compiled when first
@@ -1795,7 +1888,7 @@ sur une PS5 standard seulement : la PS5 Pro n'a jamais été essayée.
    image.bin%(icons2)s
    dans /data/hookshot (gardez-y votre %(env)s). Le premier lancement de Grapnel renomme /data/hookshot en /data/%(data)s,
    sauvegardes comprises (rien n'est copié) ; un /data/%(data)s créé avant serait pris à sa place, et vos sauvegardes laissées.
-3. Votre fichier du jeu  ->  /data/%(data)s/game.nup   (le même .nup que celui de la construction, tel quel : 25,6 Go).
+3. %(game_fr)s
 4. Lancez Grapnel depuis l'accueil.
 %(prep_fr)s
 eboot.bin et image.bin vont ensemble : après chaque nouvelle construction, recopiez les deux.

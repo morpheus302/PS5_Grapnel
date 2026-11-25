@@ -18,7 +18,7 @@ licence, and a save made with the game):
 
 ## Files
 
-296 added, 166 modified, 2 removed.
+303 added, 166 modified, 2 removed.
 
 | Change | File | Last changed |
 |---|---|---|
@@ -217,12 +217,15 @@ licence, and a save made with the game):
 | added | `scripts/grapnel-builder/art/icon0.png` | 2026-11-23 |
 | added | `scripts/grapnel-builder/art/pic0.dds` | 2026-11-23 |
 | added | `scripts/grapnel-builder/check_windows_objects.py` | 2026-11-23 |
+| added | `scripts/grapnel-builder/data/game_files_v131072.ref.xz` | 2026-11-25 |
 | added | `scripts/grapnel-builder/data/hookshot_env.txt` | 2026-11-24 |
 | added | `scripts/grapnel-builder/data/skip.txt` | 2026-11-23 |
 | added | `scripts/grapnel-builder/grapnel_build.py` | 2026-11-25 |
 | added | `scripts/grapnel-builder/grapnel_core.py` | 2026-11-25 |
+| added | `scripts/grapnel-builder/grapnel_flat.py` | 2026-11-25 |
+| added | `scripts/grapnel-builder/grapnel_game_files.py` | 2026-11-25 |
 | added | `scripts/grapnel-builder/grapnel_gui.py` | 2026-11-25 |
-| added | `scripts/grapnel-builder/grapnel_send.py` | 2026-11-24 |
+| added | `scripts/grapnel-builder/grapnel_send.py` | 2026-11-25 |
 | added | `scripts/grapnel-builder/make_prepare_driver.sh` | 2026-11-25 |
 | added | `scripts/grapnel-builder/make_prepare_tool.py` | 2026-11-25 |
 | added | `scripts/grapnel-builder/make_toolchain.py` | 2026-11-25 |
@@ -246,9 +249,11 @@ licence, and a save made with the game):
 | added | `scripts/ps5/build-smoke.sh` | 2026-11-09 |
 | added | `scripts/ps5/fetch-headers.sh` | 2026-11-09 |
 | added | `scripts/ps5/menu_fond.py` | 2026-11-23 |
-| added | `scripts/ps5/nup/check.sh` | 2026-11-09 |
+| added | `scripts/ps5/nup/check.sh` | 2026-11-25 |
 | added | `scripts/ps5/nup/nnfs_check.c` | 2026-11-09 |
 | added | `scripts/ps5/nup/nup_check.c` | 2026-11-09 |
+| added | `scripts/ps5/nup/nup_hashes.py` | 2026-11-25 |
+| added | `scripts/ps5/nup/nup_same.c` | 2026-11-25 |
 | added | `scripts/ps5/nup/probe_nup_pc.c` | 2026-11-09 |
 | added | `scripts/ps5/plat-probe/EXPECTED.txt` | 2026-11-09 |
 | added | `scripts/ps5/plat-probe/host_window_test.c` | 2026-11-14 |
@@ -328,6 +333,8 @@ licence, and a save made with the game):
 | added | `tests/test_gpu_trail.cpp` | 2026-11-11 |
 | added | `tests/test_gpu_trail.py` | 2026-11-22 |
 | added | `tests/test_grapnel_builder.py` | 2026-11-25 |
+| added | `tests/test_grapnel_flat.py` | 2026-11-25 |
+| added | `tests/test_grapnel_game_files.py` | 2026-11-25 |
 | added | `tests/test_grapnel_send.py` | 2026-11-24 |
 | modified | `tests/test_guest_holes.py` | 2026-11-16 |
 | added | `tests/test_heap_pieces.py` | 2026-11-15 |

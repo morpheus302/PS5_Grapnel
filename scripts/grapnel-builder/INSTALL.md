@@ -1,8 +1,8 @@
-# Grapnel builder 0.2.4 (Linux): building Grapnel for your PS5
+# Grapnel builder 0.2.5 (Linux): building Grapnel for your PS5
 
 *Version française : [INSTALL.fr.md](INSTALL.fr.md).*
 
-*On Windows, take `Grapnel-Builder-0.2.4-windows-x64.zip` from the Releases page instead: a folder with everything in it and a
+*On Windows, take `Grapnel-Builder-0.2.5-windows-x64.zip` from the Releases page instead: a folder with everything in it and a
 step-by-step window (its README, and "Build it on Windows" in the repository's README). This guide is the Linux one.*
 
 Grapnel is a port to the PS5 of Longshot, the static recompilation of *The Legend of Zelda: Ocarina of Time* (Nintendo Switch 2
@@ -16,7 +16,8 @@ Linux PC from **your own copy of the game**, with this builder. Nothing it makes
   name: that is fine too, the builder checks the game's program itself). The
   builder takes that `.nup` only, and refuses any other game or version.
 - **A Linux PC** (64-bit x86, Ubuntu 24.04, Debian 13 or newer), **8 GB of memory** at the least (16 GB or more is faster),
-  **10 GB of free disk** besides the `.nup` (and about 2 GB more for LLVM), and 45 minutes to 2 hours and a half.
+  **10 GB of free disk** besides the `.nup` (and about 2 GB more for LLVM; **25.3 GB more** if your dump keeps game files
+  compressed: [below](#if-your-dump-keeps-game-files-compressed)), and 45 minutes to 2 hours and a half.
 - **LLVM 19.1.7** exactly (every player compiles with the same compiler, so every eboot is the one the project tested),
   **Python 3.12 or newer** (the builder's packages need it) and **git**: how to get them is below.
 - **The console toolchain**, `grapnel-toolchain-0.3.3-linux-x64.tar.xz`, from the **Releases** page of the Grapnel repository
@@ -103,13 +104,49 @@ the preparation is made again only when the renderer or the lists changed).
    `/data/grapnel`; copy `image.bin`, `prompts/` and `hookshot_prepare_progress.txt` into `/data/hookshot`. Grapnel's first
    start renames it to `/data/grapnel`, saves and all; a `/data/grapnel` made beforehand would be used instead, and the saves
    left behind.
-3. Your `.nup`, as it is → `/data/grapnel/game.nup`.
+3. Your game file → `/data/grapnel/game.nup`: your `.nup` as it is, **or, if the builder said your dump keeps game files
+   compressed, the flat copy it made** (`<out>/game.nup`, or in the `--flat-dir` folder), never that dump itself.
+   `<out>/INSTALL.en.txt` names the file to copy.
 4. Start Grapnel. **The shaders are ready**: the builder prepared them on your PC, into the console driver's own cache (the
    title folder's `radv-shader-cache`), so the game does not stop to compile them as you play (each compile in play is a stop
    of a second or more, and memory the console never gets back). The console prepares nothing: the launch screen only checks
    the cache at start (its SHADERS page says "Ready"). A pipeline no list knows is still compiled the first time it is drawn.
 
 `eboot.bin` and `image.bin` go together: after every new build, copy both again.
+
+## If your dump keeps game files compressed
+
+Some dumpers keep part of the game's files compressed in the `.nup` (zstd, "codec 1": about a fifth of the files, 40,588 of
+186,587, in the dumps seen so far), or every file as a zstd frame of itself. The builder reads such a `.nup` without trouble,
+but the console reads the game file as it is, in place, and cannot open those files: the game stops as soon as Play is pressed
+(the log says `stored zstd-compressed in the package (codec 1): not read in place`). Before 0.2.3 such a dump built and could
+not be played; 0.2.3 and 0.2.4 refused it at step 1.
+
+Now the builder says so at the start of the build (`==== Compression detected ====`; the window: a page of its own,
+"Compression detected") and makes, **once**, a **flat copy** of your dump: the same game, every file
+as itself, as a normal dump has it (only the game's update is kept, with its program and its files: what the console and the
+builder read). It goes to `<out>/game.nup` (`--flat-dir <folder>` chooses another folder, on another disk if this one is
+full), about **25.3 GB**: the builder checks the room on that disk first and says how much is missing. It is written, then
+read back whole and every file checked against what the dump holds (its SHA-256), then kept: the next builds take it again
+(`game.nup.grapnel.json` beside it says from which file). A copy cut short (the PC off, Ctrl+C) carries on where it stopped.
+Your dump is never changed. **That copy is the game file the console needs**: step 6 of the window sends it, and by hand you copy
+it, not your dump. `--flatten` makes the copy alone, without building:
+
+```sh
+~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --flatten --nup "$HOME/<your dump>.nup" --flat-dir ~/grapnel-out
+```
+
+A normal `.nup` gets no copy: it is the game file as it is.
+
+## Corrupted files
+
+Every build checks your dump's files against those of a sound dump of the same version, from the fingerprints (SHA-256) the
+`.nup` itself holds for each file, in under a second (`scripts/grapnel-builder/data/game_files_v131072.ref.xz`: file names and
+fingerprints, nothing of the game). A file whose fingerprint differs (the dump tool read it wrong: some 23 GB dumps have blocks
+of zeros in a few files) or that is missing is said first, `==== Corrupted files detected ====` and the list (the window: a
+red box, "Corrupted files detected"). Where the game uses one, a texture, a sound or a voice may be missing (the Water Temple's
+walls in such dumps), or the game may stop: dump the game again if you can. The build goes on. A file your dump has more than
+the reference is not a fault.
 
 ## Private
 
