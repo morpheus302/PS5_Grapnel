@@ -3,7 +3,7 @@
 Grapnel is a modified version of Longshot (https://git.magicbean.dev/MagicBeanDev/Longshot), from its commit
 `ac778751` of 2026-11-16, with later Longshot changes carried over. This repository has no development history (it is
 a snapshot), so this list is the notice of what was changed and when, as section 5a of the GPL-3.0 asks: every file
-added, modified or removed since that commit, with the date it last changed. Snapshot of 2026-11-24.
+added, modified or removed since that commit, with the date it last changed. Snapshot of 2026-11-25.
 
 Inside the files, comments marked `(ps5)`, `(hookshot-ps5)` or `(grapnel)` say what the port changed and why.
 
@@ -22,7 +22,7 @@ licence, and a save made with the game):
 
 | Change | File | Last changed |
 |---|---|---|
-| added | `.github/README.md` | 2026-11-24 |
+| added | `.github/README.md` | 2026-11-25 |
 | modified | `.gitignore` | 2026-11-23 |
 | modified | `CONTRIBUTING.md` | 2026-11-23 |
 | added | `CREDITS.md` | 2026-11-24 |
@@ -34,7 +34,7 @@ licence, and a save made with the game):
 | removed | `builder/setup/longshot.ico` | 2026-11-23 |
 | modified | `builder/setup/setup.rc` | 2026-11-23 |
 | modified | `docs/development.md` | 2026-11-22 |
-| added | `docs/grapnel-changes.md` | 2026-11-24 |
+| added | `docs/grapnel-changes.md` | 2026-11-25 |
 | added | `docs/ps5-port.md` | 2026-11-24 |
 | added | `docs/tested/2026-11-16-astc-reuse-joeymagnus-off.md` | 2026-11-17 |
 | added | `docs/tested/2026-11-16-astc-reuse-joeymagnus-on.md` | 2026-11-17 |
@@ -60,7 +60,7 @@ licence, and a save made with the game):
 | added | `docs/tested/2026-11-17-tex-compact-gap-gumminaomi-own2.md` | 2026-11-18 |
 | added | `gpu/vk/astc_reuse.h` | 2026-11-17 |
 | added | `gpu/vk/cheap_clock.h` | 2026-11-22 |
-| added | `gpu/vk/console_prepare.h` | 2026-11-23 |
+| added | `gpu/vk/console_prepare.h` | 2026-11-25 |
 | added | `gpu/vk/dead_targets.h` | 2026-11-17 |
 | added | `gpu/vk/draw_lean.h` | 2026-11-22 |
 | modified | `gpu/vk/drawn_writeback.h` | 2026-11-12 |
@@ -85,7 +85,7 @@ licence, and a save made with the game):
 | modified | `gpu/vk/vk_api.h` | 2026-11-16 |
 | modified | `gpu/vk/vk_bug_report.cpp` | 2026-11-16 |
 | modified | `gpu/vk/vk_coopmat.cpp` | 2026-11-23 |
-| modified | `gpu/vk/vk_draw.cpp` | 2026-11-24 |
+| modified | `gpu/vk/vk_draw.cpp` | 2026-11-25 |
 | modified | `gpu/vk/vk_framegen.cpp` | 2026-11-23 |
 | added | `gpu/vk/vk_gputrail.cpp` | 2026-11-11 |
 | added | `gpu/vk/vk_gputrail.h` | 2026-11-11 |
@@ -209,23 +209,23 @@ licence, and a save made with the game):
 | added | `ps5/mesa-patches/windows/README.md` | 2026-11-24 |
 | added | `ps5/skip.txt` | 2026-11-23 |
 | added | `ps5/stubs/libSceAudioIn_link_stub.c` | 2026-11-24 |
-| added | `scripts/grapnel-builder/INSTALL.fr.md` | 2026-11-24 |
-| added | `scripts/grapnel-builder/INSTALL.md` | 2026-11-24 |
+| added | `scripts/grapnel-builder/INSTALL.fr.md` | 2026-11-25 |
+| added | `scripts/grapnel-builder/INSTALL.md` | 2026-11-25 |
 | added | `scripts/grapnel-builder/art/hookshot_menu_fond.png` | 2026-11-23 |
 | added | `scripts/grapnel-builder/art/icon0.png` | 2026-11-23 |
 | added | `scripts/grapnel-builder/art/pic0.dds` | 2026-11-23 |
 | added | `scripts/grapnel-builder/check_windows_objects.py` | 2026-11-23 |
 | added | `scripts/grapnel-builder/data/hookshot_env.txt` | 2026-11-24 |
 | added | `scripts/grapnel-builder/data/skip.txt` | 2026-11-23 |
-| added | `scripts/grapnel-builder/grapnel_build.py` | 2026-11-24 |
-| added | `scripts/grapnel-builder/grapnel_core.py` | 2026-11-24 |
-| added | `scripts/grapnel-builder/grapnel_gui.py` | 2026-11-24 |
+| added | `scripts/grapnel-builder/grapnel_build.py` | 2026-11-25 |
+| added | `scripts/grapnel-builder/grapnel_core.py` | 2026-11-25 |
+| added | `scripts/grapnel-builder/grapnel_gui.py` | 2026-11-25 |
 | added | `scripts/grapnel-builder/grapnel_send.py` | 2026-11-24 |
 | added | `scripts/grapnel-builder/make_prepare_driver.sh` | 2026-11-24 |
-| added | `scripts/grapnel-builder/make_prepare_tool.py` | 2026-11-24 |
-| added | `scripts/grapnel-builder/make_toolchain.py` | 2026-11-24 |
+| added | `scripts/grapnel-builder/make_prepare_tool.py` | 2026-11-25 |
+| added | `scripts/grapnel-builder/make_toolchain.py` | 2026-11-25 |
 | added | `scripts/grapnel-builder/make_windows_llvm.sh` | 2026-11-24 |
-| added | `scripts/grapnel-builder/make_windows_package.py` | 2026-11-24 |
+| added | `scripts/grapnel-builder/make_windows_package.py` | 2026-11-25 |
 | added | `scripts/grapnel-builder/profile/chunks.txt` | 2026-11-23 |
 | added | `scripts/grapnel-builder/profile/hot_funcs.txt` | 2026-11-23 |
 | added | `scripts/grapnel-builder/profile/hot_pieces.txt` | 2026-11-23 |
@@ -233,7 +233,7 @@ licence, and a save made with the game):
 | added | `scripts/grapnel-builder/window/grapnel.ico` | 2026-11-23 |
 | added | `scripts/grapnel-builder/window/grapnel.png` | 2026-11-23 |
 | added | `scripts/grapnel-builder/window/launcher.c` | 2026-11-23 |
-| added | `scripts/grapnel-builder/window/launcher.manifest` | 2026-11-24 |
+| added | `scripts/grapnel-builder/window/launcher.manifest` | 2026-11-25 |
 | added | `scripts/grapnel-builder/window/launcher.rc` | 2026-11-23 |
 | modified | `scripts/host_shaders.py` | 2026-11-22 |
 | modified | `scripts/linux/appimage.sh` | 2026-11-23 |
@@ -301,7 +301,7 @@ licence, and a save made with the game):
 | modified | `tests/test_compile_retry_jobs.py` | 2026-11-23 |
 | modified | `tests/test_compile_stops_on_exception.py` | 2026-11-23 |
 | modified | `tests/test_compiler_failure.py` | 2026-11-23 |
-| added | `tests/test_console_prepare.py` | 2026-11-23 |
+| added | `tests/test_console_prepare.py` | 2026-11-25 |
 | modified | `tests/test_cpu_target.py` | 2026-11-16 |
 | modified | `tests/test_crash_dialog.py` | 2026-11-16 |
 | modified | `tests/test_crash_record.py` | 2026-11-16 |
@@ -325,7 +325,7 @@ licence, and a save made with the game):
 | modified | `tests/test_gpl_library_cache.py` | 2026-11-16 |
 | added | `tests/test_gpu_trail.cpp` | 2026-11-11 |
 | added | `tests/test_gpu_trail.py` | 2026-11-22 |
-| added | `tests/test_grapnel_builder.py` | 2026-11-24 |
+| added | `tests/test_grapnel_builder.py` | 2026-11-25 |
 | added | `tests/test_grapnel_send.py` | 2026-11-24 |
 | modified | `tests/test_guest_holes.py` | 2026-11-16 |
 | added | `tests/test_heap_pieces.py` | 2026-11-15 |

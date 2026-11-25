@@ -228,6 +228,9 @@ T = {
             "nup-damaged": "Le fichier .nup est incomplet ou abîmé : copiez-le à nouveau depuis votre console.",
             "nup-wrong-game": "Ce .nup n'est pas le bon jeu ou pas la bonne version : il faut Zelda Ocarina of Time (Nintendo Switch "
                               "2 Edition) avec sa mise à jour v131072.",
+            "nup-compressed": "Ce .nup garde des fichiers du jeu compressés : la console lit le fichier du jeu tel quel et ne sait pas "
+                              "encore ouvrir ceux-là (le jeu ne pourrait pas démarrer). Certains outils de dump écrivent le jeu "
+                              "ainsi ; une version de Grapnel qui les lit est en préparation.",
             "options": "Il manque le fichier du jeu ou le dossier de sortie.",
             "disk": "Pas assez de place sur le disque du dossier de sortie.",
             "tool-failed": "Un outil de la construction a échoué. Envoyez le journal avec votre rapport.",
@@ -962,7 +965,7 @@ class Assistant:
             ("ok: the ZBIC program", "zbic"), ("ok: clang", "compile"), ("ok: prospero-clang", "compile"),
             ("ok: the shader preparation", "prepare"), ("ok: the .nup", "nup"))
     CODE_ROW = {"llvm": "llvm", "toolchain": "toolchain", "python": "python", "python-icons": "python", "zbic": "zbic",
-                "nup-folder": "nup", "nup-missing": "nup", "nup-not-nup": "nup", "nup-damaged": "nup", "nup-wrong-game": "nup",
+                "nup-folder": "nup", "nup-missing": "nup", "nup-not-nup": "nup", "nup-damaged": "nup", "nup-wrong-game": "nup", "nup-compressed": "nup",
                 "prepare-tool": "prepare", "prepare-platform": "prepare", "prepare-stale": "prepare"}
 
     def page_check(self):

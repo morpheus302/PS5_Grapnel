@@ -143,6 +143,41 @@ int main() {
     CHECK(CP::gate(g, 4000, CP::kMesh, 0, 0, 4) == CP::Take::kStop);   // (no room even alone: a new heap)
     CHECK(CP::gate(g, 4000, CP::kMesh, 1, 0, 4) == CP::Take::kWait);
     CHECK(CP::gate(g, 5200, CP::kMesh, 0, 0, 4) == CP::Take::kGo);
+    // (a PC, the builder's preparation: a new start frees little there, so nothing stops it for memory: what has no room is
+    // taken alone once the others are done; and one worker per 512 MiB above the floor. A player's PC on 25/11/2026: 3504 MiB
+    // available, a mesh program first: every start stopped at item 0, "short of memory again and again")
+    CP::Gate pc;
+    pc.restart_frees = false;
+    pc.floor_mb = 1024;
+    CHECK(CP::gate(pc, 3504, CP::kMesh, 0, 0, 12) == CP::Take::kGo);      // (no room for a mesh program: alone)
+    CHECK(CP::gate(pc, 3504, CP::kMesh, 1, 0, 12) == CP::Take::kWait);    // (the others' end first)
+    CHECK(CP::gate(pc, 800, CP::kGraphics, 0, 0, 12) == CP::Take::kGo);   // (under the floor: one at a time, never a stop)
+    CHECK(CP::gate(pc, 800, CP::kGraphics, 1, 0, 12) == CP::Take::kWait);
+    CHECK(CP::allowed(pc, 3504, 12) == 4 && CP::allowed(pc, 800, 12) == 1 && CP::allowed(pc, 1024 + 512 * 20, 12) == 12);
+    CHECK(CP::gate(pc, 3504, CP::kCompute, 3, 0, 12) == CP::Take::kGo && CP::gate(pc, 3504, CP::kCompute, 4, 0, 12) == CP::Take::kWait);
+    CHECK(CP::gate(pc, 9000, CP::kMesh, 1, 1, 12) == CP::Take::kGo);      // (room for two: as on the console)
+    CHECK(CP::gate(pc, -1, CP::kMesh, 3, 1, 12) == CP::Take::kGo);
+    CHECK(CP::gate(pc, 800, CP::kMesh, 0, 0, 1) == CP::Take::kGo && CP::allowed(pc, 9000, 1) == 1 && CP::allowed(pc, 9000, 0) == 1);
+    CHECK(CP::gate(pc, 9000, CP::kMesh, 2, 2, 12) == CP::Take::kWait);   // (two mesh programs at most, as on the console)
+    CHECK(CP::gate(pc, 800, CP::kCompute, 0, 0, 12, true) == CP::Take::kGo);         // (struck, under the floor: alone)
+    CHECK(CP::gate(pc, 800, CP::kCompute, 1, 0, 12, false, true) == CP::Take::kWait);   // (a struck one being built alone)
+    {   // (whatever the memory, floor, kind and load: never a stop on a PC, and nothing busy always goes)
+        bool never_stops = true, idle_goes = true;
+        for (int64_t floor : {0, 1024, 2048, 100000})
+            for (int64_t free_mb = -1; free_mb <= 14000; free_mb += 97)
+                for (CP::Kind kind : {CP::kGraphics, CP::kCompute, CP::kMesh})
+                    for (unsigned workers : {1u, 4u, 12u, 32u})   // (0 workers: none to take anything, -1 memory waits)
+                        for (unsigned busy = 0; busy <= workers; busy++)
+                            for (unsigned busy_mesh = 0; busy_mesh <= std::min(busy, 2u); busy_mesh++)
+                                for (int struck = 0; struck < 2; struck++) {
+                                    CP::Gate h = pc;
+                                    h.floor_mb = floor;
+                                    const CP::Take t = CP::gate(h, free_mb, kind, busy, busy_mesh, workers, struck, false);
+                                    if (t == CP::Take::kStop) never_stops = false;
+                                    if (busy == 0 && t != CP::Take::kGo) idle_goes = false;
+                                }
+        CHECK(never_stops && idle_goes);
+    }
     // ---- the end ----
     CHECK(CP::goes_on_by_itself(CP::End::kMemory, 10, 11) && !CP::goes_on_by_itself(CP::End::kMemory, 10, 10));
     CHECK(!CP::goes_on_by_itself(CP::End::kPlayer, 10, 50) && !CP::goes_on_by_itself(CP::End::kFinished, 0, 50));
@@ -300,6 +335,18 @@ def check_sources():
                    "driver_cache_bytes(&where)"):
         if needle not in work and needle not in draw:
             raise SystemExit("the console's preparation lost: " + needle)
+    # (0.2.3: on a PC, and there only, the gate never stops for memory, from a 1 GiB floor, with a 15-minute stall: set before the
+    # floor's switch is read, so that HOOKSHOT_PS5_PREPARE_MIN_FREE_MB still sets the floor)
+    pc_at = work.find("#if !defined(__PROSPERO__)\n    // (a PC, the builder's preparation")
+    pc_end = work.find("#endif", pc_at)
+    pc_block = work[pc_at:pc_end] if pc_at >= 0 else ""
+    for needle in ("gate.restart_frees = false;", "gate.floor_mb = 1024;", "stall_default_s = 900;"):
+        if needle not in pc_block:
+            raise SystemExit("prep_work: the PC's gate lost: " + needle)
+    if pc_end > work.find('gate.floor_mb = env_int("HOOKSHOT_PS5_PREPARE_MIN_FREE_MB", gate.floor_mb);'):
+        raise SystemExit("prep_work: the PC's floor is set after its switch is read")
+    if work.count("restart_frees = false") != 1:
+        raise SystemExit("prep_work: restart_frees is set off outside the PC's block")
     for banned in ("program_cache_save(", "pipeline_note(", "pcache_init()", "pipeline_cache_save("):
         if banned in work:
             raise SystemExit("the console's preparation keeps something besides the driver's cache: " + banned)

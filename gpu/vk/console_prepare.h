@@ -212,17 +212,24 @@ inline size_t advance(size_t done, const std::vector<bool>& made, const std::vec
 // ---- the memory gate, before each item is taken ----
 /// The free direct memory in MiB (-1: not known, a PC); how many items are being built, how many of them mesh programs; the
 /// workers there are. kGo: take it; kWait: not now (memory, or another mesh program), take it when one ends; kStop: stop here
-/// (under the floor, or a mesh program with no room even alone): the title starts again with a heap of its own and goes on
+/// (under the floor, or a mesh program with no room even alone): the title starts again with a heap of its own and goes on.
+/// Never kStop on a PC (restart_frees false): what has no room there is taken alone
 enum class Take { kGo, kWait, kStop };
 struct Gate {
     int64_t floor_mb = 2048;        // (HOOKSHOT_PS5_PREPARE_MIN_FREE_MB: under it nothing is taken; the host's guard stops the title at 192)
     int64_t mesh_room_mb = 3072;    // (what a mesh program may need above the floor: ~2.7 GiB measured for the heaviest)
     int64_t all_mb = 5120;          // (above the floor: every worker; above half of it, half of them; else one)
     unsigned mesh_at_once = kMeshAtOnce;   // (mesh programs at once, at most: the two heaviest together would be ~5.5 GiB)
+    // (false on a PC, the Grapnel builder's preparation: a new start frees little there, the memory is the system's and its other
+    // programs', so nothing stops for memory: what has no room is taken alone once the others are done, the page file making up
+    // the rest; and one worker per worker_mb above the floor. A player's PC with 3.5 GB available: every start stopped at item 0)
+    bool restart_frees = true;
+    int64_t worker_mb = 512;
 };
 inline unsigned allowed(const Gate& g, int64_t free_mb, unsigned workers) {
     if (free_mb < 0) return workers;
     const int64_t above = free_mb - g.floor_mb;
+    if (!g.restart_frees) return (unsigned)std::clamp<int64_t>(above / g.worker_mb, 1, std::max(1u, workers));
     if (above >= g.all_mb) return workers;
     if (above >= g.all_mb / 2) return std::max(1u, workers / 2);
     return 1;
@@ -231,11 +238,12 @@ inline unsigned allowed(const Gate& g, int64_t free_mb, unsigned workers) {
 /// ends this start too, it alone is left to play and not the items built beside it; solo_busy: such an item is being built
 inline Take gate(const Gate& g, int64_t free_mb, Kind kind, unsigned busy, unsigned busy_mesh, unsigned workers, bool struck = false,
                  bool solo_busy = false) {
-    if (free_mb >= 0 && free_mb < g.floor_mb) return Take::kStop;
+    const Take no_room = busy ? Take::kWait : g.restart_frees ? Take::kStop : Take::kGo;
+    if (free_mb >= 0 && free_mb < g.floor_mb) return g.restart_frees ? Take::kStop : no_room;
     if (solo_busy || (struck && busy)) return Take::kWait;
     if (kind == kMesh) {
         if (busy_mesh >= g.mesh_at_once) return Take::kWait;
-        if (free_mb >= 0 && free_mb - g.floor_mb < g.mesh_room_mb * (busy_mesh + 1)) return busy ? Take::kWait : Take::kStop;
+        if (free_mb >= 0 && free_mb - g.floor_mb < g.mesh_room_mb * (busy_mesh + 1)) return no_room;
     }
     if (busy >= allowed(g, free_mb, workers)) return Take::kWait;
     return Take::kGo;

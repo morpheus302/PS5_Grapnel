@@ -32,6 +32,36 @@ def fake_nup(path, title_id, version):
         f.write(blob)
 
 
+def nup_with_files(path, title_id, version, files):
+    """A NUP package with one title whose romfs is one folder of files [(name, stored bytes, logical size, codec)], the layout
+    host/nup_fs.c reads (nx2/test_nup_codec.py's, with several files)"""
+    names = b"".join(n.encode() for n, _, _, _ in files)
+    nf = len(files)
+    dirs_at = 0xb0 + 0x40
+    files_at = dirs_at + 24
+    kids_at = files_at + 80 * nf
+    strings_at = kids_at + 4 * nf
+    data_at = (strings_at + len(names) + 15) & ~15
+    blob = bytearray(data_at + sum(len(d) for _, d, _, _ in files))
+    blob[:4] = b"NUP\x01"
+    struct.pack_into("<Q", blob, 0x40, len(blob))
+    blob[0x80:0x84] = b"TOC\x01"
+    struct.pack_into("<IQQQQ", blob, 0x84, 1, 1, nf, strings_at - 0x80, len(names))
+    struct.pack_into("<QIIII", blob, 0xb0, title_id, 0, 0xffffffff, 0, version)
+    struct.pack_into("<4I", blob, dirs_at, 0, 0, 0, nf)
+    name_at, at = 0, data_at
+    for i, (name, data, size, codec) in enumerate(files):
+        struct.pack_into("<IIQQQ", blob, files_at + 80 * i, name_at, len(name), size, at, len(data))
+        blob[files_at + 80 * i + 64] = codec
+        struct.pack_into("<I", blob, kids_at + 4 * i, 1 + i)
+        blob[at:at + len(data)] = data
+        name_at += len(name)
+        at += len(data)
+    blob[strings_at:strings_at + len(names)] = names
+    with open(path, "wb") as f:
+        f.write(blob)
+
+
 class Refusals(unittest.TestCase):
     def code(self, path):
         with self.assertRaises(core.BuildError) as c:
@@ -54,6 +84,29 @@ class Refusals(unittest.TestCase):
             self.assertEqual(self.code(game), "nup-wrong-game")
             fake_nup(game, core.GAME_TITLE_ID, core.GAME_VERSION)
             self.assertEqual(core.check_nup(game), (core.GAME_TITLE_ID, core.GAME_VERSION))
+
+    def test_compressed_game_files_are_refused(self):
+        # (0.2.3: the console reads the game file in place (host/nup_fs.c) and opens no compressed file: a player's dump built,
+        # and the game stopped as Play was pressed. Files with codec 1, or a package of zstd frames with codec 0, are refused at
+        # step 1; plain files, and .zs files that are zstd in the game too, are taken)
+        import zstandard
+        plain = [("f%03d.bin" % i, bytes(range(64)) * 2, 128, 0) for i in range(80)] + [("t.zs", zstandard.compress(b"x" * 100), 100, 0)]
+        with tempfile.TemporaryDirectory() as tmp:
+            game = os.path.join(tmp, "game.nup")
+            nup_with_files(game, core.GAME_TITLE_ID, core.GAME_VERSION, plain)
+            self.assertEqual(core.check_nup(game), (core.GAME_TITLE_ID, core.GAME_VERSION))
+            frame = zstandard.ZstdCompressor(write_content_size=True).compress(bytes(range(64)) * 2)
+            coded = plain[:40] + [("c%03d.bin" % i, frame, 128, 1) for i in range(3)] + plain[40:]
+            nup_with_files(game, core.GAME_TITLE_ID, core.GAME_VERSION, coded)
+            self.assertEqual(self.code(game), "nup-compressed")
+            framed = [(n, frame, 128, 0) for n, _, _, _ in plain[:80]] + plain[80:]
+            nup_with_files(game, core.GAME_TITLE_ID, core.GAME_VERSION, framed)
+            with self.assertRaises(core.BuildError) as c:
+                core.check_nup(game)
+            self.assertEqual(c.exception.code, "nup-compressed")
+            self.assertIn("frames of themselves", c.exception.message)
+            nup_with_files(game, 0x040074A01BF12000, 458752, framed)   # (another game: said as such first)
+            self.assertEqual(self.code(game), "nup-wrong-game")
 
     def test_update_under_the_base_games_id(self):
         # (a player's dump on 24/11/2026: its newest title is v131072 under the base game's id, the update merged into it; their
@@ -311,6 +364,13 @@ class Prepare(unittest.TestCase):
             sys.path.insert(0, os.path.join(ROOT, "nx2"))
             import translator_files
             info["shader_stamp"] = translator_files.stamp(os.path.join(ROOT, "gpu", "vk"))
+            with open(os.path.join(kit, "prepare.json"), "w") as f:
+                json.dump(info, f)
+            with self.assertRaises(core.BuildError) as e:   # (0.2.3: a preparation older than 0.3, whose gate stops a PC short of memory)
+                core.prepare_tool(t)
+            self.assertEqual(e.exception.code, "prepare-stale")
+            self.assertIn("0.3 or newer", e.exception.message)
+            info["version"] = "0.3"
             with open(os.path.join(kit, "prepare.json"), "w") as f:
                 json.dump(info, f)
             self.assertEqual(core.prepare_tool(t)[0], kit)

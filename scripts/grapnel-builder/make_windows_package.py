@@ -508,7 +508,7 @@ def main():
     ap.add_argument("--out", help="default dist/next/grapnel-windows-<version>")
     ap.add_argument("--stage", default=os.path.join(PS5, "build", "grapnel-windows", "stage"))
     ap.add_argument("--cache", default=os.path.join(PS5, "build", "grapnel-windows", "downloads"))
-    ap.add_argument("--toolchain", default=os.path.join(PS5, "build", "grapnel-windows", "toolchain", "grapnel-toolchain-0.3.1-windows-x64"),
+    ap.add_argument("--toolchain", default=os.path.join(PS5, "build", "grapnel-windows", "toolchain", "grapnel-toolchain-0.3.2-windows-x64"),
                     help="make_toolchain.py --system windows-x64's folder")
     ap.add_argument("--mingw", default=os.path.expanduser("~/.local/opt/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64"),
                     help="llvm-mingw for Linux: builds Grapnel.exe and the two helper programs")

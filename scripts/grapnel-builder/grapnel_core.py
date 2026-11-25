@@ -55,7 +55,10 @@ if NX2 not in sys.path:
     sys.path.insert(0, NX2)
 import toolchain_ps5  # noqa: E402  (only os and subprocess: where the SDK and PS5_Vulkan are, the title's id and name)
 
-VERSION = "0.2.2"
+VERSION = "0.2.3"
+# (the shader preparation for the PC this builder takes at the least: 0.3's gate never stops for memory on a PC, and its workers follow
+# the memory; with 0.2's, a PC with ~3.5 GB available stopped at item 0 until the builder gave up, exit 13, 25/11/2026)
+PREPARE_MIN_VERSION = (0, 3)
 STEPS = ["Reading the game's program", "Translating it to C", "Compiling and linking for the console",
          "Putting the title and data folders together", "Making the button icons",
          "Listing the game's shaders", "Preparing the shaders on this PC", "Writing the notes"]
@@ -528,6 +531,14 @@ def prepare_tool(t):
     if info.get("driver_build_id") != CONSOLE_DRIVER_BUILD_ID:
         raise BuildError("prepare-stale", "the toolchain's shader preparation models the driver %s, not the console's %s"
                          % (info.get("driver_build_id"), CONSOLE_DRIVER_BUILD_ID))
+    try:
+        have = tuple(int(x) for x in str(info.get("version", "0")).split("."))
+    except ValueError:
+        have = (0,)
+    if have < PREPARE_MIN_VERSION:
+        raise BuildError("prepare-stale", "the toolchain's shader preparation is %s; Grapnel %s needs %s or newer (on a PC with little "
+                         "memory the older one stops until the build gives up). Take this release's toolchain"
+                         % (info.get("version"), VERSION, ".".join(map(str, PREPARE_MIN_VERSION))))
     return d, info
 
 
@@ -763,12 +774,47 @@ def check_nup(path):
     try:
         t = nup.pick_title(p, None)
         found = ", ".join("%016X v%d" % (x["id"], x["version"]) for x in p.titles)
+        if t["id"] in GAME_TITLE_IDS and t["version"] == GAME_VERSION:
+            coded, framed, sampled = nup_console_unreadable(p, t)
     finally:
         p.f.close()
     if t["id"] not in GAME_TITLE_IDS or t["version"] != GAME_VERSION:
         raise BuildError("nup-wrong-game", "this .nup holds %s, its newest title %016X v%d. Grapnel is made from %s (title %016X v%d) "
                          "and no other game or version." % (found, t["id"], t["version"], GAME_NAME, GAME_TITLE_ID, GAME_VERSION))
+    if coded or framed:
+        raise BuildError("nup-compressed", "this .nup keeps game files compressed (%s): the console reads the game file in place, and "
+                         "Grapnel %s cannot open compressed ones there yet, so the game could not start. Some dumpers "
+                         "write the game's files this way; a version of Grapnel that reads them is being worked on."
+                         % ("%d files stored zstd-compressed" % coded if coded else
+                            "%d of %d files sampled are zstd frames of themselves" % (framed, sampled), VERSION))
     return t["id"], t["version"]
+
+
+def nup_console_unreadable(p, t):
+    """What the console's game file reader (host/nup_fs.c, which reads the package in place) cannot open in the title's romfs:
+    files stored with a codec (1: zstd, or one it does not know), and a package whose files are zstd frames of themselves with
+    codec 0 (a newer dumper's, nx2/nup.py is_packed), found as the console finds it: 64 files spread over the tree, not .zs ones
+    (those are zstd in the game too). The console cannot open those files, so the game cannot start. (The likely cause, not
+    confirmed by its log, of a player's CE-108255-1 as Play was pressed on 25/11/2026: a dump from another dumper that built.)
+    -> (files with a codec, framed files among those sampled, files sampled)"""
+    import nup
+    if t["romfs"] == 0xffffffff:
+        return 0, 0, 0
+    files = list(p.walk(t["romfs"]))
+    coded = sum(1 for _, r in files if r[5] != 0)
+    step = max(1, len(files) // 64)
+    sampled = framed = 0
+    for i in range(0, len(files), step):
+        if sampled >= 64:
+            break
+        for rel, r in files[i:i + step]:
+            if r[5] != 0 or r[2] < 18 or rel.endswith(".zs"):
+                continue
+            p.f.seek(r[3])
+            sampled += 1
+            framed += nup.frame_content_size(p.f.read(18)) == r[2]
+            break
+    return coded, framed, sampled
 
 
 EXTRACT_PROMPTS = r"""

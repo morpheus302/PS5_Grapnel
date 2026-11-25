@@ -10962,7 +10962,7 @@ int launcher_driver_check(int want, size_t* asked) {
 // then hand the driver no cache, and it keeps its pipelines on disk alone, holding weak references in memory). A program
 // RX_VK_SKIP_FILE names is left out, as play leaves it out. The free direct memory is read before each item (console_prep::gate);
 // the progress file (hookshot_prepare.txt in the driver's cache folder: a new folder is a new preparation) every 2 s; a stall of
-// HOOKSHOT_PS5_PREPARE_STALL_S (300) with nothing finished stops it, the items under way struck. At the end the driver's files are
+// HOOKSHOT_PS5_PREPARE_STALL_S (300; on a PC 900) with nothing finished stops it, the items under way struck. At the end the driver's files are
 // let settle (Mesa writes them behind), then the screen has the title started again with a heap of its own ----
 #if defined(__PROSPERO__)
 extern "C" int hos_ps5_memory_free(uint64_t* direct_mb, uint64_t* flexible_mb, uint64_t* largest_mb);
@@ -11285,23 +11285,32 @@ void prep_work(bool force) {
     for (size_t i = 0; i < total; i++)
         if (i < start || CP::has(pf.skip, i)) units_done0 += cp.weight[i];
     CP::Gate gate;
-    gate.floor_mb = env_int("HOOKSHOT_PS5_PREPARE_MIN_FREE_MB", gate.floor_mb);
+    int stall_default_s = 300;
 #if !defined(__PROSPERO__)
-    // (a PC's many workers: every one of them only with 512 MiB each above the floor (a heavy compute program's compile takes
-    // ~500, build/cache-pilote), half of them with half of that, else one)
-    gate.all_mb = std::max<int64_t>(gate.all_mb, (int64_t)workers * 512);
+    // (a PC, the builder's preparation: one worker per 512 MiB above the floor (a heavy compute program's compile takes ~500,
+    // build/cache-pilote), at least one; nothing stops for memory, since a new start frees little on a PC, the memory being the
+    // system's and its other programs': what has no room waits for the others' end and is taken alone (CP::Gate::restart_frees).
+    // A floor of 1 GiB for the system. A player's PC with 3.5 GB available, 25/11/2026: under the console's 2 GiB floor and 3 GiB
+    // of mesh room, every start stopped at item 0 until the builder gave up (exit 13). And 15 minutes with nothing finished
+    // before a stall, not 5: a program taken alone on a PC short of memory may compile through the page file (the heaviest mesh
+    // program, ~2.7 GiB, takes ~12 s alone with room, notes-agents/preparation-premier-lancement.md))
+    gate.restart_frees = false;
+    gate.floor_mb = 1024;
+    stall_default_s = 900;
 #endif
+    gate.floor_mb = env_int("HOOKSHOT_PS5_PREPARE_MIN_FREE_MB", gate.floor_mb);
     static const int slow_ms = (int)env_int("HOOKSHOT_PS5_PREPARE_SLOW_MS", 1000);
-    static const int stall_s = (int)env_int("HOOKSHOT_PS5_PREPARE_STALL_S", 300);
+    static const int stall_s = (int)env_int("HOOKSHOT_PS5_PREPARE_STALL_S", stall_default_s);
     const int64_t free0 = prep_free_mb();
     const double planned_s = CP::estimate_s(cp.plan, workers);
     logf("vk: prepare: the console's own preparation (%s): %zu census programs (%zu mesh, %zu of them with a task stage; %zu compute), "
          "%zu pipeline records in %zu programs (%zu shipped, %zu more lists, %zu of this console's play, %zu twice: %s); %zu items, "
-         "from item %zu (%s)%s; %u workers; %lld MiB free (nothing taken under %lld); the lists and the census's heads read in %.1f s, "
+         "from item %zu (%s)%s; %u workers; %lld MiB free (%s %lld); the lists and the census's heads read in %.1f s, "
          "the census in %.1f s; first estimate %s",
          rs.fresh ? "from the start" : "going on", cp.census_programs, cp.mesh.size(), cp.mesh_task, cp.compute.size(), cp.recs.size(),
          cp.groups.size(), cp.shipped, cp.extra, cp.own, cp.twice, cp.lists_said.c_str(), total, start, rs.why,
-         pf.skip.empty() ? "" : ", some left to play", workers, (long long)free0, (long long)gate.floor_mb, load_s, open_s,
+         pf.skip.empty() ? "" : ", some left to play", workers, (long long)free0,
+         gate.restart_frees ? "nothing taken under" : "one at a time under", (long long)gate.floor_mb, load_s, open_s,
          CP::duration_text(planned_s).c_str());
     std::vector<std::atomic<uint8_t>> state(total);   // 0 to do, 1 being built, 2 made
     for (size_t i = 0; i < total; i++) state[i].store(i < start || CP::has(pf.skip, i) ? 2 : 0);
