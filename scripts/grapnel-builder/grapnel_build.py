@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Grapnel builder v0.2.3 (Linux and Windows, command line): the PS5 title GRPN00001 made on the player's PC from their own game file.
+"""Grapnel builder v0.2.4 (Linux and Windows, command line): the PS5 title GRPN00001 made on the player's PC from their own game file.
 
     python3 -I scripts/grapnel-builder/grapnel_build.py --nup <game.nup> --out <folder> --toolchain <folder> [options]
     python3 -I scripts/grapnel-builder/grapnel_build.py --check --toolchain <folder> [options]     (the tools alone, no game)

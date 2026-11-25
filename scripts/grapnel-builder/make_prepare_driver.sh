@@ -13,7 +13,8 @@
 #      windows-x64: <build>/src/amd/vulkan/vulkan_radeon.dll (zlib and winpthreads inside)
 #
 # <PS5_Mesa source>: github.com/mihawk-99/PS5_Mesa at 0f86253f674c425052948eb3cb116c81e646a734 with ps5/mesa-patches/0001 to
-# 0007 applied, and for windows-x64 ps5/mesa-patches/windows/0001 to 0004 on top (ps5/mesa-patches/README.md).
+# 0007 applied, and for windows-x64 ps5/mesa-patches/windows/0001 to 0004 on top, and for both ps5/mesa-patches/pc/0001
+# (since Grapnel 0.2.4: CLFLUSH off the console, for CPUs without CLFLUSHOPT) last (ps5/mesa-patches/README.md).
 # <clc-bin>: mesa_clc and vtn_bindgen2 built for this PC from the same PS5_Mesa revision (PS5_Vulkan's tools/build-radv.sh
 # makes them first: -Dmesa-clc=system).
 # Linux runs the driver with Debian's libc++ 19 (libc++1-19, libc++abi1-19, unpacked: --libcxx), the SDK's 18.1 headers

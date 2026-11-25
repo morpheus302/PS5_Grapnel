@@ -55,10 +55,12 @@ if NX2 not in sys.path:
     sys.path.insert(0, NX2)
 import toolchain_ps5  # noqa: E402  (only os and subprocess: where the SDK and PS5_Vulkan are, the title's id and name)
 
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 # (the shader preparation for the PC this builder takes at the least: 0.3's gate never stops for memory on a PC, and its workers follow
 # the memory; with 0.2's, a PC with ~3.5 GB available stopped at item 0 until the builder gave up, exit 13, 25/11/2026)
-PREPARE_MIN_VERSION = (0, 3)
+# (0.4: its driver flushes with CLFLUSH on a PC: with 0.3's, a CPU without CLFLUSHOPT (Intel before Skylake, AMD before Zen) stopped
+# the preparation at once, exit 0xC000001D, 25/11/2026)
+PREPARE_MIN_VERSION = (0, 4)
 STEPS = ["Reading the game's program", "Translating it to C", "Compiling and linking for the console",
          "Putting the title and data folders together", "Making the button icons",
          "Listing the game's shaders", "Preparing the shaders on this PC", "Writing the notes"]
@@ -126,6 +128,12 @@ def crashed(code):
     """A run that ended on a crash: an NTSTATUS error on Windows (0xC0000005 an access violation, 0xC00000FD a stack overflow:
     a run under Wine ended so once, 24/11/2026, its cause not found), a signal on Linux"""
     return (code >= 0xC0000000) if os.name == "nt" else code < 0
+
+
+def illegal_instruction(code):
+    """A run that ended on an instruction this PC's processor does not have: 0xC000001D on Windows, SIGILL on Linux. Running it
+    again ends the same way (a player's i5-4670K with the preparation 0.3's driver, CLFLUSHOPT, 25/11/2026)"""
+    return code == 0xC000001D if os.name == "nt" else code == -4
 
 
 def quiet_crashes():
@@ -1636,6 +1644,11 @@ class Builder:
                 return
             except BuildError as e:
                 code = int(re.search(r"exit (-?\d+)", e.message).group(1)) if re.search(r"exit (-?\d+)", e.message) else -1
+                if illegal_instruction(code):
+                    raise BuildError("prepare-cpu", "%s on this PC stopped on an instruction this processor does not have (exit %d). "
+                                     "Please report it with your processor's name (Grapnel's issues). Meanwhile, build on another PC, "
+                                     "or build with --no-prepare: the console then prepares the shaders at its first start"
+                                     % (what, code), e.details, log)
                 if (code not in (13, 14, SILENT_EXIT) and not crashed(code)) or attempt == PREP_TRIES - 1:
                     raise BuildError("prepare-failed", "%s on this PC ended (exit %d)%s" % (
                         what, code, ": short of memory again and again; free some memory or use --prepare-workers" if code == 13 else ""),

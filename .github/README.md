@@ -58,16 +58,16 @@ Grapnel is published before it is finished, so that others can help.
 - **Your own copy of the game**, dumped from your own console, as a `.nup` file (game version 131072). About 26 GB.
 - **A PC with Windows 10 or 11 (64-bit), or Linux on x86-64**, for the builder, with a processor that has AVX2 (x86-64-v3):
   8 GB of memory at the least (16 GB is much faster), about 12 GB of free disk space besides the game file.
-  - **Windows:** `Grapnel-Builder-0.2.3-windows-x64.zip` from this repository's
+  - **Windows:** `Grapnel-Builder-0.2.4-windows-x64.zip` from this repository's
     [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) page: a folder with everything in it (its LLVM, Python,
     the console toolchain), nothing to install.
   - **Linux:** **LLVM 19.1.7**, git and Python 3.12 or newer, and **the console toolchain**,
-    `grapnel-toolchain-0.3.2-linux-x64.tar.xz`, from the same page (the console's SDK, linker parts, driver, the shaders'
+    `grapnel-toolchain-0.3.3-linux-x64.tar.xz`, from the same page (the console's SDK, linker parts, driver, the shaders'
     preparation and the FTP server step 6 can send; no game file in it).
 
 ### Build it on Windows
 
-1. Unpack the whole `Grapnel-Builder-0.2.3-windows-x64.zip` (right click, "Extract All...") into a folder of yours with a
+1. Unpack the whole `Grapnel-Builder-0.2.4-windows-x64.zip` (right click, "Extract All...") into a folder of yours with a
    short path, `C:\Grapnel-Builder` for instance. Nothing to install, no administrator rights.
 2. Start `Grapnel.exe`. It is not signed: if Windows says "Windows protected your PC", click **More info**, then **Run
    anyway**. An antivirus may scan or block the builder's programs (`clang.exe`, `ld.lld.exe`, `zbic_unpack.exe`,
@@ -108,9 +108,9 @@ the builder's Python environment (`~/grapnel-venv`, from `scripts/grapnel-builde
 unpack the toolchain, then, in the repository's folder:
 
 ```bash
-~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3.2-linux-x64
+~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3.3-linux-x64
 ~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --nup "$HOME/<your game>.nup" --out ~/grapnel-out \
-    --toolchain ~/grapnel-toolchain-0.3.2-linux-x64
+    --toolchain ~/grapnel-toolchain-0.3.3-linux-x64
 ```
 
 - `--check` needs no game: it looks at everything the build needs (its Python packages, LLVM 19.1.7, the console
@@ -301,16 +301,16 @@ Grapnel est publié avant d'être fini, pour que d'autres puissent aider.
 - **Votre propre copie du jeu**, extraite de votre propre console, en fichier `.nup` (version 131072 du jeu). Environ 26 Go.
 - **Un PC sous Windows 10 ou 11 (64 bits), ou sous Linux x86-64**, pour le constructeur, avec un processeur qui a l'AVX2
   (x86-64-v3) : 8 Go de mémoire au moins (16 Go, c'est bien plus rapide), environ 12 Go libres en plus du fichier du jeu.
-  - **Windows :** `Grapnel-Builder-0.2.3-windows-x64.zip`, sur la page
+  - **Windows :** `Grapnel-Builder-0.2.4-windows-x64.zip`, sur la page
     [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) de ce dépôt : un dossier qui contient tout (son LLVM,
     Python, la chaîne d'outils console), rien à installer.
   - **Linux :** **LLVM 19.1.7**, git et Python 3.12 ou plus récent, et **la chaîne d'outils console**,
-    `grapnel-toolchain-0.3.2-linux-x64.tar.xz`, sur la même page (le SDK, les pièces de lien et le pilote de la console, la
+    `grapnel-toolchain-0.3.3-linux-x64.tar.xz`, sur la même page (le SDK, les pièces de lien et le pilote de la console, la
     préparation des shaders et le serveur FTP que l'étape 6 peut envoyer ; aucun fichier du jeu dedans).
 
 ### Construire sous Windows
 
-1. Décompressez tout `Grapnel-Builder-0.2.3-windows-x64.zip` (clic droit, « Extraire tout… ») dans un dossier à vous au
+1. Décompressez tout `Grapnel-Builder-0.2.4-windows-x64.zip` (clic droit, « Extraire tout… ») dans un dossier à vous au
    chemin court, par exemple `C:\Grapnel-Builder`. Rien à installer, pas de droits d'administrateur.
 2. Lancez `Grapnel.exe`. Il n'est pas signé : si Windows affiche « Windows a protégé votre ordinateur », cliquez sur
    **Informations complémentaires**, puis **Exécuter quand même**. Un antivirus peut examiner ou bloquer les programmes du
@@ -355,9 +355,9 @@ de [heydemoura/PS5_Longshot](https://github.com/heydemoura/PS5_Longshot) ; son g
 cloner ce dépôt, décompresser la chaîne d'outils, puis, dans le dossier du dépôt :
 
 ```bash
-~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3.2-linux-x64
+~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --check --toolchain ~/grapnel-toolchain-0.3.3-linux-x64
 ~/grapnel-venv/bin/python -I scripts/grapnel-builder/grapnel_build.py --nup "$HOME/<votre jeu>.nup" --out ~/grapnel-out \
-    --toolchain ~/grapnel-toolchain-0.3.2-linux-x64
+    --toolchain ~/grapnel-toolchain-0.3.3-linux-x64
 ```
 
 - `--check` n'a pas besoin du jeu : il vérifie tout ce dont la construction a besoin (ses paquets Python, LLVM 19.1.7, la

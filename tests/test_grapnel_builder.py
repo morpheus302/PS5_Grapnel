@@ -369,8 +369,14 @@ class Prepare(unittest.TestCase):
             with self.assertRaises(core.BuildError) as e:   # (0.2.3: a preparation older than 0.3, whose gate stops a PC short of memory)
                 core.prepare_tool(t)
             self.assertEqual(e.exception.code, "prepare-stale")
-            self.assertIn("0.3 or newer", e.exception.message)
-            info["version"] = "0.3"
+            self.assertIn("0.4 or newer", e.exception.message)
+            info["version"] = "0.3"   # (0.2.4: 0.3's driver stops a CPU without CLFLUSHOPT at once)
+            with open(os.path.join(kit, "prepare.json"), "w") as f:
+                json.dump(info, f)
+            with self.assertRaises(core.BuildError) as e:
+                core.prepare_tool(t)
+            self.assertEqual(e.exception.code, "prepare-stale")
+            info["version"] = "0.4"
             with open(os.path.join(kit, "prepare.json"), "w") as f:
                 json.dump(info, f)
             self.assertEqual(core.prepare_tool(t)[0], kit)
@@ -421,8 +427,47 @@ class Prepare(unittest.TestCase):
             self.assertFalse(core.crashed(3) or core.crashed(13))
         else:
             self.assertTrue(core.crashed(-11) and core.crashed(-6))
+            self.assertTrue(core.illegal_instruction(-4) and not core.illegal_instruction(-11) and not core.illegal_instruction(13))
             self.assertFalse(core.crashed(3) or core.crashed(0) or core.crashed(13))
         core.quiet_crashes()   # (nothing on Linux; on Windows the error mode)
+
+    def test_an_illegal_instruction_is_said_at_once(self):
+        """(0.2.4) A preparation run that ends on an instruction the processor does not have is not run again (it would end the
+        same way, six times): said at once as prepare-cpu, with --no-prepare as the way on; a crash still goes on"""
+        b = core.Builder.__new__(core.Builder)
+        b.ev = type("E", (), {"info": lambda self, line: None, "progress": lambda self, *a: None})()
+        ill = 0xC000001D if os.name == "nt" else -4
+        segv = 0xC0000005 if os.name == "nt" else -11
+        said = {}
+        for code, want, runs in ((ill, "prepare-cpu", 1), (segv, "prepare-failed", core.PREP_TRIES)):
+            calls = []
+
+            def run(*a, **k):
+                calls.append(1)
+                raise core.BuildError("tool-failed", "the preparation ended (exit %d)" % code)
+            b._run = run
+            sleep, core.time.sleep = core.time.sleep, lambda s: None
+            try:
+                with self.assertRaises(core.BuildError) as e:
+                    b._prepare_runs("run", {}, "log", "the preparation", 0.0, 1.0)
+            finally:
+                core.time.sleep = sleep
+            self.assertEqual((e.exception.code, len(calls)), (want, runs))
+            said[want] = e.exception.message
+        self.assertIn("--no-prepare", said["prepare-cpu"])
+        self.assertIn("exit %d" % ill, said["prepare-cpu"])
+
+    def test_the_window_says_its_version(self):
+        """(0.2.4) The window's title and its dialogs' titles carry the builder's release, read from grapnel_core.py"""
+        sys.path.insert(0, os.path.join(ROOT, "scripts", "grapnel-builder"))
+        try:
+            import grapnel_gui as gui
+        except ImportError:   # (no tkinter on this PC)
+            self.skipTest("no tkinter")
+        self.assertEqual(gui.builder_version(), core.VERSION)
+        src = open(os.path.join(ROOT, "scripts", "grapnel-builder", "grapnel_gui.py"), encoding="utf-8").read()
+        self.assertIn('self.t["title"] = "%s %s" % (self.t["title"], version)', src)
+        self.assertIn('self.t["err_title"] = "%s %s" % (self.t["err_title"], version)', src)
 
     def test_no_git_on_the_pc(self):
         """A player's PC without git (most Windows PCs): the check of the preparation's renderer revision says nothing, and the

@@ -228,6 +228,8 @@ T = {
             "nup-damaged": "Le fichier .nup est incomplet ou abîmé : copiez-le à nouveau depuis votre console.",
             "nup-wrong-game": "Ce .nup n'est pas le bon jeu ou pas la bonne version : il faut Zelda Ocarina of Time (Nintendo Switch "
                               "2 Edition) avec sa mise à jour v131072.",
+            "prepare-cpu": "La préparation des shaders s'est arrêtée sur une instruction que le processeur de ce PC n'a pas. "
+                           "Signalez-le avec le nom du processeur (issues de Grapnel). En attendant : construisez sur un autre PC.",
             "nup-compressed": "Ce .nup garde des fichiers du jeu compressés : la console lit le fichier du jeu tel quel et ne sait pas "
                               "encore ouvrir ceux-là (le jeu ne pourrait pas démarrer). Certains outils de dump écrivent le jeu "
                               "ainsi ; une version de Grapnel qui les lit est en préparation.",
@@ -509,6 +511,17 @@ def default_out():
     return os.path.join(docs if os.path.isdir(docs) else home, "Grapnel")
 
 
+def builder_version():
+    """(0.2.4) The builder's release, grapnel_core.VERSION, read from its file without importing it (the window opens first):
+    in the window's title and its dialogs' titles, so that a player's screenshot says which version they ran"""
+    try:
+        with open(os.path.join(HERE, "grapnel_core.py"), encoding="utf-8") as f:
+            m = re.search(r'^VERSION = "([^"]+)"', f.read(), re.M)
+        return m.group(1) if m else ""
+    except OSError:
+        return ""
+
+
 def this_version():
     """This builder's code (app/VERSION, git describe at packaging), "" in a checkout"""
     try:
@@ -624,7 +637,11 @@ class Assistant:
     def __init__(self, root, args):
         self.root, self.args = root, args
         self.lang = ui_language()
-        self.t = T[self.lang]
+        self.t = dict(T[self.lang])
+        version = builder_version()
+        if version:   # (0.2.4: "Grapnel builder 0.2.4", "Grapnel 0.2.4" on the dialogs)
+            self.t["title"] = "%s %s" % (self.t["title"], version)
+            self.t["err_title"] = "%s %s" % (self.t["err_title"], version)
         self.parts = bundled(args)
         self.can_prepare = prepare_possible(self.parts["toolchain"])
         self.events = queue.Queue()
@@ -965,7 +982,7 @@ class Assistant:
             ("ok: the ZBIC program", "zbic"), ("ok: clang", "compile"), ("ok: prospero-clang", "compile"),
             ("ok: the shader preparation", "prepare"), ("ok: the .nup", "nup"))
     CODE_ROW = {"llvm": "llvm", "toolchain": "toolchain", "python": "python", "python-icons": "python", "zbic": "zbic",
-                "nup-folder": "nup", "nup-missing": "nup", "nup-not-nup": "nup", "nup-damaged": "nup", "nup-wrong-game": "nup", "nup-compressed": "nup",
+                "nup-folder": "nup", "nup-missing": "nup", "nup-not-nup": "nup", "nup-damaged": "nup", "nup-wrong-game": "nup", "nup-compressed": "nup", "prepare-cpu": "prepare",
                 "prepare-tool": "prepare", "prepare-platform": "prepare", "prepare-stale": "prepare"}
 
     def page_check(self):

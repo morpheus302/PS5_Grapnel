@@ -18,7 +18,7 @@ licence, and a save made with the game):
 
 ## Files
 
-294 added, 166 modified, 2 removed.
+296 added, 166 modified, 2 removed.
 
 | Change | File | Last changed |
 |---|---|---|
@@ -201,12 +201,14 @@ licence, and a save made with the game):
 | added | `ps5/mesa-patches/0005-radv-ps5-three-experiments-on-waiting-for-the-shaders-RADV_P.patch` | 2026-11-23 |
 | added | `ps5/mesa-patches/0006-radv-ps5-narrower-waits-between-draws-late-allocation-and-sh.patch` | 2026-11-23 |
 | added | `ps5/mesa-patches/0007-radv-ps5-RADV_PS5_LATE_ALLOC-masks-and-gfx10-make-the-CU-mas.patch` | 2026-11-23 |
-| added | `ps5/mesa-patches/README.md` | 2026-11-24 |
+| added | `ps5/mesa-patches/README.md` | 2026-11-25 |
+| added | `ps5/mesa-patches/pc/0001-radv-ps5-the-host-model-flushes-with-CLFLUSH-which-every-x86.patch` | 2026-11-25 |
+| added | `ps5/mesa-patches/pc/README.md` | 2026-11-25 |
 | added | `ps5/mesa-patches/windows/0001-meson-allow-the-shader-cache-on-Windows-Grapnel-s-pr.patch` | 2026-11-24 |
 | added | `ps5/mesa-patches/windows/0002-MinGW-uint-for-the-shared-CL-C-headers-drm.h-without.patch` | 2026-11-24 |
 | added | `ps5/mesa-patches/windows/0003-Windows-MinGW-the-host-model-s-memory-over-VirtualAl.patch` | 2026-11-24 |
 | added | `ps5/mesa-patches/windows/0004-Windows-MinGW-the-cache-s-last-POSIX-calls-fstatat-s.patch` | 2026-11-24 |
-| added | `ps5/mesa-patches/windows/README.md` | 2026-11-24 |
+| added | `ps5/mesa-patches/windows/README.md` | 2026-11-25 |
 | added | `ps5/skip.txt` | 2026-11-23 |
 | added | `ps5/stubs/libSceAudioIn_link_stub.c` | 2026-11-24 |
 | added | `scripts/grapnel-builder/INSTALL.fr.md` | 2026-11-25 |
@@ -221,7 +223,7 @@ licence, and a save made with the game):
 | added | `scripts/grapnel-builder/grapnel_core.py` | 2026-11-25 |
 | added | `scripts/grapnel-builder/grapnel_gui.py` | 2026-11-25 |
 | added | `scripts/grapnel-builder/grapnel_send.py` | 2026-11-24 |
-| added | `scripts/grapnel-builder/make_prepare_driver.sh` | 2026-11-24 |
+| added | `scripts/grapnel-builder/make_prepare_driver.sh` | 2026-11-25 |
 | added | `scripts/grapnel-builder/make_prepare_tool.py` | 2026-11-25 |
 | added | `scripts/grapnel-builder/make_toolchain.py` | 2026-11-25 |
 | added | `scripts/grapnel-builder/make_windows_llvm.sh` | 2026-11-24 |

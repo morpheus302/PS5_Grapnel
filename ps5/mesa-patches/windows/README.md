@@ -27,6 +27,7 @@ git clone https://github.com/mihawk-99/PS5_Mesa.git mesa && cd mesa
 git checkout 0f86253f674c425052948eb3cb116c81e646a734
 git apply --index <grapnel>/ps5/mesa-patches/0*.patch
 git apply --index <grapnel>/ps5/mesa-patches/windows/0*.patch        # (Windows only)
+git apply --index <grapnel>/ps5/mesa-patches/pc/0*.patch             # (both, since 0.2.4: ../pc/README.md)
 <grapnel>/scripts/grapnel-builder/make_prepare_driver.sh --system linux-x64 --mesa . --build ../host-linux \
     --sdk-cxx <payload SDK>/target/include/c++/v1 --libcxx <libc++1-19 unpacked>/usr/lib/x86_64-linux-gnu --clc-bin <dir>
 <grapnel>/scripts/grapnel-builder/make_prepare_driver.sh --system windows-x64 --mesa . --build ../host-windows \

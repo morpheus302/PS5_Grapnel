@@ -44,7 +44,8 @@ sys.path.insert(0, os.path.join(ROOT, "nx2"))
 import toolchain_ps5  # noqa: E402
 import translator_files  # noqa: E402
 
-VERSION = "0.3"   # (0.2: --system windows-x64; 0.3: on a PC the gate never stops for memory, its workers follow it, Grapnel 0.2.3)
+VERSION = "0.4"   # (0.2: --system windows-x64; 0.3: on a PC the gate never stops for memory, its workers follow it, Grapnel 0.2.3;
+                  # 0.4: its driver flushes with CLFLUSH on a PC (ps5/mesa-patches/pc/), for CPUs without CLFLUSHOPT, Grapnel 0.2.4)
 # (the lift's settings the builder's lift runs with, grapnel_core.LIFT_ENV: the headers are written with them)
 LIFT_ENV = {"A64_HOT_CHUNK": "1", "A64_FASTFP": "0", "A64_FPX_NC": "1", "A64_VFPX_ELEM": "hot"}
 LIBCXX = ("libc++.so.1", "libc++abi.so.1", "libunwind.so.1")

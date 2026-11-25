@@ -1,0 +1,41 @@
+Subject: [PATCH 1/1] radv/ps5: the host model flushes with CLFLUSH, which every
+ x86-64 CPU has
+
+Grapnel's shaders' preparation runs this driver on the player's PC, on the PS5
+winsys's host model. radv_ps5_cpu_flush wrote CLFLUSHOPT lines whatever the
+CPU, and the model zeroes and flushes every GTT buffer it makes
+(radv_ps5_bo.c): on Intel's CPUs before Skylake and AMD's before Zen, which
+have no CLFLUSHOPT, the preparation stopped at its first buffer with an illegal
+instruction (exit 0xC000001D on an i5-4670K, 25/11/2026).
+
+Off the console the lines go out with CLFLUSH, between the same two MFENCEs.
+The console's driver compiles exactly as before (__PROSPERO__); nothing that
+the shader cache keys or holds changes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/amd/vulkan/winsys/ps5/radv_ps5_platform.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c b/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c
+index b8335d7ae69..fc76ed36c55 100644
+--- a/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c
++++ b/src/amd/vulkan/winsys/ps5/radv_ps5_platform.c
+@@ -186,7 +186,17 @@ radv_ps5_cpu_flush(const void *address, size_t bytes)
+     * GPU wrote). A submission's words took one serialising CLFLUSH a line. */
+    __builtin_ia32_mfence();
+    for (; at < end; at += line)
++#if defined(__PROSPERO__)
+       __asm__ volatile("clflushopt %0" : "+m"(*(volatile char *)at));
++#else
++      /* (Grapnel's shaders' preparation on a PC, the host model: CLFLUSH,
++       * which every x86-64 CPU has. CLFLUSHOPT is not on Intel's before
++       * Skylake nor AMD's before Zen, and the preparation stopped there at its
++       * first zeroed buffer (0xC000001D on an i5-4670K, 25/11/2026). Nothing
++       * runs on a GPU here: what the console gains from CLFLUSHOPT does not
++       * matter, the closing MFENCE orders the lines as before) */
++      __asm__ volatile("clflush %0" : "+m"(*(volatile char *)at));
++#endif
+    __builtin_ia32_mfence();
+ }
+ 
