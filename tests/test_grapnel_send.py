@@ -127,6 +127,30 @@ class Send(unittest.TestCase):
         self.assertEqual(gs.verify(c, self.out)[0], [])
         c.close()
 
+    def test_the_consoles_own_cache_stays(self):
+        """(a PC without AVX2) a build with no driver's cache of its own: the console prepared the shaders itself into the
+        title's radv-shader-cache (an hour), and a send of the build leaves it there; the title's other leftovers still go.
+        A build with its own cache replaces it as before (test_the_titles_old_folders_go)"""
+        import shutil
+        shutil.rmtree(os.path.join(self.out, "homebrew", "GRPN00001", "radv-shader-cache"))
+        db = ("data", "homebrew", "GRPN00001", "radv-shader-cache", "mesa_shader_cache_db")
+        write(self.there(*db, "part0", "mesa_cache.db"), b"made by the console")
+        write(self.there(*db, "part0", "mesa_cache.idx"), b"index")
+        os.makedirs(self.there(*db, "part7"))
+        write(self.there("data", "homebrew", "GRPN00001", "old", "x.bin"), b"x")
+        write(self.there("data", "grapnel", "hookshot_prepare_progress.txt"), b"finished 1\n")
+        c = self.console()
+        gs.send(c, self.out, None, log=lambda *a: None)
+        self.assertEqual(gs.verify(c, self.out)[0], [])
+        self.assertEqual(read(self.there(*db, "part0", "mesa_cache.db")), b"made by the console")
+        self.assertTrue(os.path.isdir(self.there(*db, "part7")))
+        self.assertFalse(os.path.exists(self.there("data", "homebrew", "GRPN00001", "old")))   # (the rest goes, as before)
+        self.assertEqual(read(self.there("data", "grapnel", "hookshot_prepare_progress.txt")), b"finished 1\n")
+        self.assertFalse(gs.console_cache_kept(["eboot.bin", "radv-shader-cache/mesa_shader_cache_db/part0/mesa_cache.db"])(
+            "radv-shader-cache/mesa_shader_cache_db/part9/mesa_cache.db"))
+        self.assertFalse(gs.console_cache_kept(["eboot.bin"])("radv-shader-cachex/a"))
+        c.close()
+
     def test_a_new_eboot_of_the_same_size_is_sent(self):
         """A new build's eboot.bin is as long as the last one's: the journal's CRC32 sends it, the size alone kept the old"""
         c = self.console()
@@ -318,6 +342,40 @@ class Send(unittest.TestCase):
         self.assertEqual(read(self.there("mnt", "ext1", "homebrew", "OTHER0001", "eboot.bin")), b"another title")
         self.assertFalse(os.path.exists(self.there("mnt", "ext2")))
         c.close()
+
+    def test_the_consoles_own_preparation_goes_with_the_data_folder(self):
+        """(a PC whose processor has no AVX2: the build's step 7 set up the console's own preparation in data/grapnel,
+        grapnel_core.setup_console_prepare) the census, the pipelines' list and the HOOKSHOT_PS5_PREPARE=1 line reach
+        /data/grapnel, on the internal storage and with the game file on the extension disk (whose line is added beside it)"""
+        import grapnel_core
+        work = os.path.join(self.tmp.name, "work-shaders")
+        census, states = os.path.join(work, "census.bin"), os.path.join(work, "states.bin")
+        write(census, b"HKSEED01" + os.urandom(1 << 20))
+        write(states, os.urandom(300 << 10))
+        data = os.path.join(self.out, "data", "grapnel")
+        r = grapnel_core.setup_console_prepare(data, census, states)
+        self.assertEqual(r["files"], ["hookshot_shaders.bin", "hookshot_pipeline_states_shipped.bin"])
+        c = self.console()
+        gs.send(c, self.out, self.nup, log=lambda *a: None)
+        self.assertEqual(gs.verify(c, self.out, self.nup)[0], [])
+        self.assertEqual(read(self.there("data", "grapnel", "hookshot_shaders.bin")), read(census))
+        self.assertEqual(read(self.there("data", "grapnel", "hookshot_pipeline_states_shipped.bin")), read(states))
+        self.assertEqual(self.env_there(), read(os.path.join(data, "hookshot_env.txt")).decode())   # (as built)
+        self.assertTrue(self.env_there().endswith("\nHOOKSHOT_PS5_PREPARE=1\n"))
+        self.assertTrue(grapnel_core.console_prepare_ready(self.there("data", "grapnel")))
+        c.close()
+        self.ext1()
+        c = self.console()
+        p = gs.plan(c, self.out, self.nup, "/mnt/ext1")
+        gs.send(c, self.out, self.nup, log=lambda *a: None, place="/mnt/ext1", nup_at=p["nup_at"])
+        self.assertEqual(gs.verify(c, self.out, self.nup, "/mnt/ext1", p["nup_at"])[0], [])
+        env = self.env_there()
+        self.assertEqual(env.count("HOOKSHOT_PS5_PREPARE=1"), 1)
+        self.assertIn("\nHOOKSHOT_PS5_NUP=/mnt/ext1/grapnel/game.nup\n", env)
+        self.assertEqual(grapnel_core.env_setting(self.there("data", "grapnel", "hookshot_env.txt"), "HOOKSHOT_PS5_PREPARE"), "1")
+        self.assertTrue(os.path.isfile(self.there("data", "grapnel", "hookshot_shaders.bin")))   # (the data folder stays /data)
+        c.close()
+
 
     def test_cancel(self):
         c = self.console()

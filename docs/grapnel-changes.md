@@ -18,7 +18,7 @@ licence, and a save made with the game):
 
 ## Files
 
-303 added, 166 modified, 2 removed.
+305 added, 166 modified, 2 removed.
 
 | Change | File | Last changed |
 |---|---|---|
@@ -119,7 +119,7 @@ licence, and a save made with the game):
 | modified | `host/discord_rpc.c` | 2026-11-16 |
 | modified | `host/game_layout.c` | 2026-11-23 |
 | modified | `host/hos.h` | 2026-11-16 |
-| modified | `host/hos_main.c` | 2026-11-24 |
+| modified | `host/hos_main.c` | 2026-11-25 |
 | modified | `host/hos_mem.c` | 2026-11-16 |
 | modified | `host/hos_paths.h` | 2026-11-23 |
 | modified | `host/hos_svc.c` | 2026-11-16 |
@@ -333,9 +333,10 @@ licence, and a save made with the game):
 | added | `tests/test_gpu_trail.cpp` | 2026-11-11 |
 | added | `tests/test_gpu_trail.py` | 2026-11-22 |
 | added | `tests/test_grapnel_builder.py` | 2026-11-25 |
+| added | `tests/test_grapnel_cpu.py` | 2026-11-25 |
 | added | `tests/test_grapnel_flat.py` | 2026-11-25 |
 | added | `tests/test_grapnel_game_files.py` | 2026-11-25 |
-| added | `tests/test_grapnel_send.py` | 2026-11-24 |
+| added | `tests/test_grapnel_send.py` | 2026-11-25 |
 | modified | `tests/test_guest_holes.py` | 2026-11-16 |
 | added | `tests/test_heap_pieces.py` | 2026-11-15 |
 | modified | `tests/test_import_buffer_binding.py` | 2026-11-16 |
@@ -364,6 +365,7 @@ licence, and a save made with the game):
 | modified | `tests/test_no_webgpu.py` | 2026-11-16 |
 | added | `tests/test_ocb_hold.py` | 2026-11-21 |
 | added | `tests/test_oot_barrier.py` | 2026-11-21 |
+| added | `tests/test_oot_first_night.py` | 2026-11-25 |
 | modified | `tests/test_pipeline_state_computes.py` | 2026-11-22 |
 | modified | `tests/test_pipeline_tour.py` | 2026-11-16 |
 | modified | `tests/test_prepare_stall.py` | 2026-11-16 |

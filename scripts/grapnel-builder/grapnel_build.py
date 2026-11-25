@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Grapnel builder v0.2.5 (Linux and Windows, command line): the PS5 title GRPN00001 made on the player's PC from their own game file.
+"""Grapnel builder v0.2.6 (Linux and Windows, command line): the PS5 title GRPN00001 made on the player's PC from their own game file.
 
     python3 -I scripts/grapnel-builder/grapnel_build.py --nup <game.nup> --out <folder> --toolchain <folder> [options]
     python3 -I scripts/grapnel-builder/grapnel_build.py --check --toolchain <folder> [options]     (the tools alone, no game)
@@ -52,15 +52,21 @@ The steps (grapnel_core.py, which a window can drive the same way):
      own preparation (lot 82) on every core, on the PC model of the console's driver, into the driver's cache as the console
      keeps it; checked (every part whole, the progress file finished, and a second pass that compiles nothing), then laid in
      homebrew/GRPN00001/radv-shader-cache (the console's /app0/radv-shader-cache) with its progress file, which the launch
-     screen reads (also data/grapnel/hookshot_prepare_progress.txt). --no-prepare: not made (the console compiles in play);
+     screen reads (also data/grapnel/hookshot_prepare_progress.txt). --no-prepare: not made (the console compiles in play).
+     A PC whose processor has no x86-64-v3 (AVX2, FMA, BMI1/2, MOVBE, F16C, LZCNT: the tool is compiled for it) does not run
+     it: the check says so (a note, not an error), and this step sets up the console's own preparation instead, at its
+     first start (about an hour on a standard PS5): the two lists copied into data/grapnel, HOOKSHOT_PS5_PREPARE=1 added to
+     its hookshot_env.txt. The same when a run stops on an instruction the processor does not have. GRAPNEL_CPU_V3=0 or 1
+     says the processor's answer instead of reading it;
   8. INSTALL (fr, en), PRIVATE.txt and manifest.json written.
 
 Output for a window: lines starting with "@@" (the rest is the tools' log, indented, and notes for the player):
     @@step <n> <of> <name>     @@progress <0..1|-> <text>     @@done <folder>     @@error <code> <message>
 
 The shaders' preparation is the console's own code (gpu/vk/vk_draw.cpp console_prepare_*, gpu/vk/console_prepare.h), run here
-on the PC; the console only reads the cache it makes (the launch screen's shader check). It needs Linux x86-64 (the
-Windows builder gets a native port of it later) and the toolchain's prepare/ of this release (the same shader stamp).
+on the PC; the console only reads the cache it makes (the launch screen's shader check). It needs Linux or Windows on x86-64
+with x86-64-v3 (else the console prepares the shaders itself: step 7) and the toolchain's prepare/ of this release (the same
+shader stamp).
 
 Ideas taken from heydemoura's Longshot PS5 Builder (heydemoura/PS5_Longshot, ps5/builder/pipeline.py, GPL-3.0): the numbered
 steps with "@@" lines for a window, a memory budget for the build, the check of the tools with no game. Its code is not copied:
@@ -159,7 +165,8 @@ def main():
     ap.add_argument("--no-shaders", action="store_true", help="no list of the game's shaders and no preparation: the game compiles "
                     "them as it plays")
     ap.add_argument("--no-prepare", action="store_true", help="the lists, but no preparation on this PC: the game compiles the shaders "
-                    "as it plays")
+                    "as it plays (on a processor without x86-64-v3, AVX2, the console prepares them at its first start, with or "
+                    "without this; GRAPNEL_CPU_V3=0 or 1 says the processor's answer)")
     ap.add_argument("--prepare-workers", type=int, default=0, help="the preparation's compiles at once (default: every core; the memory "
                     "free decides how many work)")
     a = ap.parse_args()

@@ -35,7 +35,8 @@ Grapnel is published before it is finished, so that others can help.
 - **The first start is the hardest.** Until the driver's shader cache has filled, the console compiles the game's GPU
   programs while you play: stutters, and memory that does not come back. In a crowded place this can make the title close
   itself (below). That is why the builder **prepares the shaders on your PC** (about 15 minutes): the console finds them in
-  its driver's cache from the first start and prepares nothing; only a pipeline no list knows is still compiled in play.
+  its driver's cache from the first start and prepares nothing; only a pipeline no list knows is still compiled in play. (On
+  a PC without AVX2 the console prepares them itself before the first game instead, about an hour.)
 - **Long sessions can end at a change of place.** As you play, the memory the game holds grows, and the burst of textures
   loaded when entering a crowded place (Castle Town from Hyrule Field, Kakariko) can leave too little: the title then closes
   itself. Start it again: your save is as you left it. Since 0.2.1 the shaders the console reads from its cache are kept
@@ -56,9 +57,12 @@ Grapnel is published before it is finished, so that others can help.
 - Your local network between the PC and the console: the builder's window can send the title itself (step 6, over FTP), or
   copy it yourself (an FTP server, for example).
 - **Your own copy of the game**, dumped from your own console, as a `.nup` file (game version 131072). About 26 GB.
-- **A PC with Windows 10 or 11 (64-bit), or Linux on x86-64**, for the builder, with a processor that has AVX2 (x86-64-v3):
-  8 GB of memory at the least (16 GB is much faster), about 12 GB of free disk space besides the game file.
-  - **Windows:** `Grapnel-Builder-0.2.5-windows-x64.zip` from this repository's
+- **A PC with Windows 10 or 11 (64-bit), or Linux on x86-64**, for the builder: 8 GB of memory at the least (16 GB is much
+  faster), about 12 GB of free disk space besides the game file. AVX2 is not needed: on a processor without it (x86-64-v3:
+  many Intel Celeron, Pentium and Atom processors, older AMDs), the check says so and the builder leaves the shaders to the console,
+  which prepares them itself at its first start (about an hour on a standard PS5; on such a PC the preparation would take
+  about as long). The build sets it up by itself.
+  - **Windows:** `Grapnel-Builder-0.2.6-windows-x64.zip` from this repository's
     [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) page: a folder with everything in it (its LLVM, Python,
     the console toolchain), nothing to install.
   - **Linux:** **LLVM 19.1.7**, git and Python 3.12 or newer, and **the console toolchain**,
@@ -67,7 +71,7 @@ Grapnel is published before it is finished, so that others can help.
 
 ### Build it on Windows
 
-1. Unpack the whole `Grapnel-Builder-0.2.5-windows-x64.zip` (right click, "Extract All...") into a folder of yours with a
+1. Unpack the whole `Grapnel-Builder-0.2.6-windows-x64.zip` (right click, "Extract All...") into a folder of yours with a
    short path, `C:\Grapnel-Builder` for instance. Nothing to install, no administrator rights.
 2. Start `Grapnel.exe`. It is not signed: if Windows says "Windows protected your PC", click **More info**, then **Run
    anyway**. An antivirus may scan or block the builder's programs (`clang.exe`, `ld.lld.exe`, `zbic_unpack.exe`,
@@ -124,7 +128,8 @@ unpack the toolchain, then, in the repository's folder:
   game code: the console's renderer and a model of the console's driver built for the PC, so the console's cache keys) on
   every core, as many compiles at once as the free memory allows; then it checks the cache (a second pass rebuilds everything
   and finds it all) and puts it in the title folder (`radv-shader-cache/`). On Linux and Windows; `--no-prepare` leaves it
-  out (the console then compiles in play).
+  out (the console then compiles in play). On a processor without AVX2 (x86-64-v3), which the preparation needs, it puts
+  the shaders' lists and `HOOKSHOT_PS5_PREPARE=1` beside the game instead: the console prepares them at its first start.
 - It refuses another game or another version than 131072, and a build that would leave the console too little memory.
 - It takes about 45 minutes on a recent 8-core PC (the compile ~25, the shaders' preparation ~15), up to 2 hours and a half
   on a small one; with little memory add `--lift-jobs 1 --memory 4` (slower, never different). A new build after an update
@@ -182,9 +187,10 @@ and **Quit**. The settings, saved at each change, are in five tabs:
 
 **The shaders.** The builder prepared them on your PC: at the first start the **Shaders** page says **Ready** (the driver's
 cache in the title folder and the preparation's file beside the game, `hookshot_prepare_progress.txt`), and the console
-prepares nothing. (The console can still prepare them itself, from that page, with `HOOKSHOT_PS5_PREPARE=1` added to the
-settings file and the census `hookshot_shaders.bin` beside the game: about 45 minutes to an hour on a base PS5, a fallback
-for development.)
+prepares nothing. On a PC whose processor has no AVX2, the builder did not: it put the census `hookshot_shaders.bin` (made
+from your game: private), `hookshot_pipeline_states_shipped.bin` and the line `HOOKSHOT_PS5_PREPARE=1` (at the end of
+`hookshot_env.txt`) beside the game, and at the first start that page offers **Prepare the shaders**: about an hour on a
+standard PS5, once (**Later** stops it, and the next start goes on where it stopped).
 
 `/data/grapnel/hookshot_env.txt` holds the development settings the port is played and tested with (memory, driver,
 picture). Keep the file as it is, and change a line only to try something; a setting it holds shows as such on the launch
@@ -283,7 +289,8 @@ Grapnel est publié avant d'être fini, pour que d'autres puissent aider.
   les programmes GPU du jeu pendant la partie : des saccades, et de la mémoire qui ne revient pas. Dans un lieu chargé, le
   titre peut alors se fermer de lui-même (ci-dessous). C'est pourquoi le constructeur **prépare les shaders sur votre PC**
   (environ 15 minutes) : la console les trouve dans le cache de son pilote dès le premier lancement et ne prépare rien ; seul un
-  pipeline qu'aucune liste ne connaît est encore compilé en jouant.
+  pipeline qu'aucune liste ne connaît est encore compilé en jouant. (Sur un PC sans AVX2, c'est la console qui les prépare
+  elle-même avant la première partie, environ une heure.)
 - **Une longue partie peut s'arrêter à un changement de lieu.** Au fil du jeu, la mémoire prise par le jeu grandit, et la
   rafale de textures chargées en entrant dans un lieu chargé (la citadelle depuis la plaine, le village Cocorico) peut en
   laisser trop peu : le titre se ferme alors de lui-même. Relancez-le : votre sauvegarde est telle que vous l'avez laissée.
@@ -304,9 +311,12 @@ Grapnel est publié avant d'être fini, pour que d'autres puissent aider.
 - Votre réseau local entre le PC et la console : la fenêtre du constructeur peut envoyer le titre elle-même (étape 6, par
   FTP), ou vous le copiez vous-même (un serveur FTP, par exemple).
 - **Votre propre copie du jeu**, extraite de votre propre console, en fichier `.nup` (version 131072 du jeu). Environ 26 Go.
-- **Un PC sous Windows 10 ou 11 (64 bits), ou sous Linux x86-64**, pour le constructeur, avec un processeur qui a l'AVX2
-  (x86-64-v3) : 8 Go de mémoire au moins (16 Go, c'est bien plus rapide), environ 12 Go libres en plus du fichier du jeu.
-  - **Windows :** `Grapnel-Builder-0.2.5-windows-x64.zip`, sur la page
+- **Un PC sous Windows 10 ou 11 (64 bits), ou sous Linux x86-64**, pour le constructeur : 8 Go de mémoire au moins (16 Go,
+  c'est bien plus rapide), environ 12 Go libres en plus du fichier du jeu. L'AVX2 n'est pas exigé : sur un processeur qui
+  ne l'a pas (x86-64-v3 : bien des Intel Celeron, Pentium et Atom, les AMD anciens), la vérification le dit et le constructeur
+  laisse les shaders à la console, qui les prépare elle-même à son premier lancement (environ une heure sur une PS5
+  standard ; sur un tel PC, la préparation durerait à peu près autant). La construction le met en place d'elle-même.
+  - **Windows :** `Grapnel-Builder-0.2.6-windows-x64.zip`, sur la page
     [Releases](https://github.com/morpheus302/PS5_Grapnel/releases) de ce dépôt : un dossier qui contient tout (son LLVM,
     Python, la chaîne d'outils console), rien à installer.
   - **Linux :** **LLVM 19.1.7**, git et Python 3.12 ou plus récent, et **la chaîne d'outils console**,
@@ -315,7 +325,7 @@ Grapnel est publié avant d'être fini, pour que d'autres puissent aider.
 
 ### Construire sous Windows
 
-1. Décompressez tout `Grapnel-Builder-0.2.5-windows-x64.zip` (clic droit, « Extraire tout… ») dans un dossier à vous au
+1. Décompressez tout `Grapnel-Builder-0.2.6-windows-x64.zip` (clic droit, « Extraire tout… ») dans un dossier à vous au
    chemin court, par exemple `C:\Grapnel-Builder`. Rien à installer, pas de droits d'administrateur.
 2. Lancez `Grapnel.exe`. Il n'est pas signé : si Windows affiche « Windows a protégé votre ordinateur », cliquez sur
    **Informations complémentaires**, puis **Exécuter quand même**. Un antivirus peut examiner ou bloquer les programmes du
@@ -376,7 +386,9 @@ cloner ce dépôt, décompresser la chaîne d'outils, puis, dans le dossier du d
   la chaîne d'outils (aucun code du jeu : le rendu de la console et un modèle du pilote de la console construit pour le PC, donc
   les clés de cache de la console) sur tous les cœurs, autant de compilations à la fois que la mémoire libre le permet ; puis
   il vérifie le cache (une seconde passe refait tout et trouve tout) et le met dans le dossier du titre (`radv-shader-cache/`).
-  Sous Linux et sous Windows ; `--no-prepare` s'en passe (la console compile alors en jouant).
+  Sous Linux et sous Windows ; `--no-prepare` s'en passe (la console compile alors en jouant). Sur un processeur sans AVX2
+  (x86-64-v3), dont la préparation a besoin, il met à la place les listes des shaders et `HOOKSHOT_PS5_PREPARE=1` à côté du
+  jeu : la console les prépare à son premier lancement.
 - Il refuse un autre jeu ou une autre version que 131072, et une construction qui laisserait trop peu de mémoire à la
   console.
 - Il faut environ 45 minutes sur un PC récent à 8 cœurs (la compilation ~25, la préparation des shaders ~15), jusqu'à 2 heures
@@ -438,9 +450,11 @@ sont-ils prêts) et **Quitter**. Les réglages, enregistrés à chaque changemen
 
 **Les shaders.** Le constructeur les a préparés sur votre PC : dès le premier lancement, la page **Shaders** dit **Prêts** (le
 cache du pilote dans le dossier du titre, et le fichier de la préparation à côté du jeu, `hookshot_prepare_progress.txt`), et la
-console ne prépare rien. (La console peut encore les préparer elle-même depuis cette page, avec `HOOKSHOT_PS5_PREPARE=1` ajouté
-au fichier de réglages et le recensement `hookshot_shaders.bin` à côté du jeu : environ trois quarts d'heure à une heure sur une
-PS5 standard, un secours pour le développement.)
+console ne prépare rien. Sur un PC dont le processeur n'a pas l'AVX2, il ne l'a pas fait : il a mis à côté du jeu le recensement
+`hookshot_shaders.bin` (fait à partir de votre jeu : privé), `hookshot_pipeline_states_shipped.bin` et la ligne
+`HOOKSHOT_PS5_PREPARE=1` (à la fin de `hookshot_env.txt`), et dès le premier lancement cette page propose **Préparer les
+shaders** : environ une heure sur une PS5 standard, une seule fois (**Plus tard** l'arrête, et le lancement suivant reprend où
+elle en était).
 
 `/data/grapnel/hookshot_env.txt` contient les réglages de développement avec lesquels le portage est joué et essayé
 (mémoire, pilote, image). Gardez le fichier tel quel, et ne changez une ligne que pour essayer ; un réglage qu'il fixe est

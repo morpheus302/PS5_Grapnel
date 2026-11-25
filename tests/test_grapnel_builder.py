@@ -496,7 +496,9 @@ class Prepare(unittest.TestCase):
 
     def test_an_illegal_instruction_is_said_at_once(self):
         """(0.2.4) A preparation run that ends on an instruction the processor does not have is not run again (it would end the
-        same way, six times): said at once as prepare-cpu, with --no-prepare as the way on; a crash still goes on"""
+        same way, six times): said at once as prepare-cpu; a crash still goes on. (0.2.6) Its message no longer sends to
+        --no-prepare (which leaves the shaders to be compiled in play), but says the console prepares them at its first start,
+        which the build sets up (tests/test_grapnel_cpu.py: step 7 then does)"""
         b = core.Builder.__new__(core.Builder)
         b.ev = type("E", (), {"info": lambda self, line: None, "progress": lambda self, *a: None})()
         ill = 0xC000001D if os.name == "nt" else -4
@@ -517,7 +519,9 @@ class Prepare(unittest.TestCase):
                 core.time.sleep = sleep
             self.assertEqual((e.exception.code, len(calls)), (want, runs))
             said[want] = e.exception.message
-        self.assertIn("--no-prepare", said["prepare-cpu"])
+        self.assertNotIn("--no-prepare", said["prepare-cpu"])
+        self.assertIn("console prepares the shaders itself at its first start", said["prepare-cpu"])
+        self.assertIn("about an hour", said["prepare-cpu"])
         self.assertIn("exit %d" % ill, said["prepare-cpu"])
 
     def test_the_window_says_its_version(self):

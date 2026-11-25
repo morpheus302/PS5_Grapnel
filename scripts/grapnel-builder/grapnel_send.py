@@ -26,7 +26,9 @@ copied to the PC, and the send stops if that fails. What the console already has
 journal has it with the size and CRC32 of the PC's file and the console has it with that size (a new eboot.bin is as long as
 the last one: the size alone would keep the old); a file the journal has as begun with this content and the console has
 shorter is gone on with from its end; any other is sent whole. The title's files and folders the new build does not have are
-removed (in the title's folder only: /data/grapnel keeps the saves). The .nup goes to the place's game.nup only when it is
+removed (in the title's folder only: /data/grapnel keeps the saves), except its radv-shader-cache/ when the build has none:
+on a PC that does not prepare the shaders (a processor without AVX2), the console prepares them itself into that folder
+(about an hour) and keeps its progress beside the game; a send of a new build leaves that work where it is. The .nup goes to the place's game.nup only when it is
 not there with the same size (the builder checked it is the game; its 26 GB are not read for a CRC). The title folder goes
 last, eboot.bin at its very end, so that ShadowMountPlus (which registers what it finds in a homebrew folder once it has
 stopped changing) never sees half a title.
@@ -513,16 +515,35 @@ def send(console, out, nup=None, report=None, cancel=None, log=print, host=None,
         console.upload(local, remote, offset, prog.add, cancel)
         if crc is not None:
             journal.mark(remote, size, crc)
-    # (the title's files the build no longer has: its folder is the title's alone)
+    # (the title's files the build no longer has: its folder is the title's alone. But a build with no driver's cache of its
+    # own (made on a PC that does not prepare the shaders: the console prepares them itself, into that folder, about an hour,
+    # and keeps its progress file beside the game) leaves the console's cache there: removed, the console would have it all
+    # to make again, or play with an empty cache its progress file calls finished)
+    keep = console_cache_kept(title_files)
     for rel in sorted(set(there[remote_title]) - set(title_files)):
+        if keep(rel):
+            continue
         console.delete(remote_title + "/" + rel)
         journal.files.pop(remote_title + "/" + rel, None)
     # (and its folders the build does not have, emptied above or empty already: the deepest first)
     mine = {os.path.relpath(d, title_local).replace(os.sep, "/") for d, _, _ in os.walk(title_local)} - {"."}
     for rel in sorted(set(console.folders(remote_title)) - mine, key=lambda r: (-r.count("/"), r)):
+        if keep(rel):
+            continue
         console.rmdir(remote_title + "/" + rel)
     journal.save()
     return [r for _, r, _, _, _ in todo]
+
+
+CONSOLE_CACHE = "radv-shader-cache"   # (the console driver's cache folder, in the title's: /app0/radv-shader-cache)
+
+
+def console_cache_kept(title_files):
+    """Whether a path of the console's title folder is the driver's cache the console made itself, which a send keeps: only
+    when the build sent has no cache of its own (title_files: the build's title files, relative)"""
+    if any(rel.split("/", 1)[0] == CONSOLE_CACHE for rel in title_files):
+        return lambda rel: False
+    return lambda rel: rel == CONSOLE_CACHE or rel.startswith(CONSOLE_CACHE + "/")
 
 
 def verify(console, out, nup=None, place=INTERNAL, nup_at=None):

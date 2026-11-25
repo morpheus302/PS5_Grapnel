@@ -1,8 +1,8 @@
-# Constructeur Grapnel 0.2.5 (Linux) : fabriquer Grapnel pour votre PS5
+# Constructeur Grapnel 0.2.6 (Linux) : fabriquer Grapnel pour votre PS5
 
 *English version: [INSTALL.md](INSTALL.md).*
 
-*Sous Windows, prenez plutôt `Grapnel-Builder-0.2.5-windows-x64.zip` sur la page Releases : un dossier qui contient tout et
+*Sous Windows, prenez plutôt `Grapnel-Builder-0.2.6-windows-x64.zip` sur la page Releases : un dossier qui contient tout et
 une fenêtre pas à pas (son LISEZMOI, et « Construire sous Windows » dans le README du dépôt). Ce guide-ci est celui de Linux.*
 
 Grapnel est un portage sur PS5 de Longshot, la recompilation statique de *The Legend of Zelda: Ocarina of Time* (Nintendo
@@ -19,7 +19,11 @@ sur votre propre PC Linux, à partir de **votre propre copie du jeu**, avec ce c
 - **Un PC Linux** (x86 64 bits, Ubuntu 24.04, Debian 13 ou plus récent), **8 Go de mémoire** au moins (16 Go ou plus va plus
   vite), **10 Go libres sur le disque** en plus du `.nup` (et environ 2 Go de plus pour LLVM ; **25,3 Go de plus** si votre dump
   garde des fichiers du jeu compressés : [plus bas](#si-votre-dump-garde-des-fichiers-compressés)), et de 45 minutes à
-  2 heures et demie.
+  2 heures et demie. L'AVX2 n'est pas exigé : sur un processeur qui ne l'a pas (x86-64-v3 : bien des Intel Celeron, Pentium
+  et Atom, les AMD anciens), `--check` le dit dans une ligne `note:`, le PC ne prépare pas les shaders, et la construction met
+  en place à la place la préparation par la console elle-même : elle les prépare à son premier lancement, environ une heure
+  sur une PS5 standard (sur un tel PC, cela durerait à peu près autant). `GRAPNEL_CPU_V3=0` ou `1` donne la réponse du
+  processeur au lieu de la lire.
 - **LLVM 19.1.7** exactement (tous les joueurs compilent avec le même compilateur : chaque eboot est celui que le projet a
   essayé), **Python 3.12 ou plus récent** (les paquets du constructeur l'exigent) et **git** : comment les avoir, ci-dessous.
 - **La chaîne d'outils console**, `grapnel-toolchain-0.3.3-linux-x64.tar.xz`, sur la page **Releases** du dépôt Grapnel
@@ -105,7 +109,8 @@ listes ont changé).
    puis enregistrez le titre avec vos outils homebrew : il apparaît sous le nom **Grapnel** à l'accueil. **Après une nouvelle
    construction**, effacez le `/data/homebrew/GRPN00001/radv-shader-cache` de la console avant de copier le dossier.
 2. `<out>/data/grapnel` → `/data/grapnel` (`image.bin`, `hookshot_env.txt`, `skip.txt`, `prompts/`,
-   `hookshot_prepare_progress.txt`, et `hookshot_menu_fond.rgba`, l'image de l'écran de lancement).
+   `hookshot_prepare_progress.txt`, et `hookshot_menu_fond.rgba`, l'image de l'écran de lancement ; sur un PC sans AVX2,
+   `hookshot_shaders.bin` et `hookshot_pipeline_states_shipped.bin` au lieu de `hookshot_prepare_progress.txt`).
    **Si la console a déjà `/data/hookshot`** (un portage Hookshot) : ne créez pas
    `/data/grapnel` ; copiez `image.bin`, `prompts/` et `hookshot_prepare_progress.txt` dans `/data/hookshot`. Le premier
    lancement de Grapnel le renomme en `/data/grapnel`, sauvegardes comprises ; un `/data/grapnel` créé avant serait pris à sa
@@ -118,6 +123,11 @@ listes ont changé).
    compilation en jeu est un arrêt d'une seconde et plus, et de la mémoire que la console ne récupère jamais). La console ne
    prépare rien : l'écran de lancement vérifie seulement le cache au démarrage (sa page SHADERS dit « Prêts »). Un pipeline
    qu'aucune liste ne connaît est encore compilé à sa première apparition.
+   **Sur un PC sans AVX2**, la console les prépare elle-même, à son premier lancement : sa page SHADERS propose « Préparer les
+   shaders », environ une heure sur une PS5 standard, une seule fois (« Plus tard » l'arrête, et le lancement suivant reprend
+   où elle en était). Elle lit `hookshot_shaders.bin` (fait à partir de votre jeu : privé) et
+   `hookshot_pipeline_states_shipped.bin` à côté du jeu, et `HOOKSHOT_PS5_PREPARE=1`, que la construction a ajouté à la fin de
+   `hookshot_env.txt` (dans `/data/hookshot`, copiez les deux fichiers et ajoutez cette ligne au vôtre).
 
 `eboot.bin` et `image.bin` vont ensemble : après chaque nouvelle construction, recopiez les deux.
 
@@ -175,7 +185,9 @@ textures du jeu lui-même. Enfin, il prépare les shaders : il fait la liste des
 les contiennent) et des pipelines à construire (depuis les listes publiques de ce dépôt : aucun fichier du jeu), puis lance **la
 préparation des shaders de la console elle-même sur votre PC**, sur un modèle du pilote de la console construit pour Linux (le
 même pilote, donc les mêmes clés de cache), et vérifie le cache qu'il a fait : chaque partie entière, et une seconde passe qui
-refait tout et trouve tout, sans rien compiler. Le `prepare/` de la chaîne d'outils ne contient aucun code du jeu. Linux x86-64
-seulement pour l'instant ; `--no-prepare` s'en passe (la console compile alors en jouant). Sa source est
+refait tout et trouve tout, sans rien compiler. Le `prepare/` de la chaîne d'outils ne contient aucun code du jeu. Il demande un
+processeur x86-64-v3 (AVX2) : sur un processeur qui ne l'est pas, la construction met à la place les deux listes et
+`HOOKSHOT_PS5_PREPARE=1` à côté du jeu, et la console prépare les shaders à son premier lancement (de même quand une passe
+s'arrête sur une instruction que le processeur n'a pas). `--no-prepare` s'en passe (la console compile alors en jouant). Sa source est
 `scripts/grapnel-builder/grapnel_build.py` ; sa vérification : deux constructions depuis des dossiers différents donnent le même
 eboot, à l'octet près.

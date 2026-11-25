@@ -14,6 +14,7 @@ front end (grapnel_build.py, the command line; a window later) gives it Options 
     b.icons()            # 5. the button icons from the game's own files
     b.shaders()          # 6. the list of the game's shaders and of the pipelines to build (in the work folder)
     b.prepare()          # 7. the console driver's shader cache made on this PC from them: out/homebrew/GRPN00001/radv-shader-cache
+                         # (a processor without x86-64-v3: the console's own preparation set up in out/data/grapnel instead)
     b.write_notes()      # 8. INSTALL (fr, en), PRIVATE.txt, manifest.json
     b.run()              # all of the above, in order
 
@@ -57,7 +58,7 @@ if NX2 not in sys.path:
     sys.path.insert(0, NX2)
 import toolchain_ps5  # noqa: E402  (only os and subprocess: where the SDK and PS5_Vulkan are, the title's id and name)
 
-VERSION = "0.2.5"
+VERSION = "0.2.6"
 # (the shader preparation for the PC this builder takes at the least: 0.3's gate never stops for memory on a PC, and its workers follow
 # the memory; with 0.2's, a PC with ~3.5 GB available stopped at item 0 until the builder gave up, exit 13, 25/11/2026)
 # (0.4: its driver flushes with CLFLUSH on a PC: with 0.3's, a CPU without CLFLUSHOPT (Intel before Skylake, AMD before Zen) stopped
@@ -138,6 +139,121 @@ def illegal_instruction(code):
     return code == 0xC000001D if os.name == "nt" else code == -4
 
 
+# ---- this PC's processor: the shaders' preparation for the PC needs x86-64-v3 ----
+# The toolchain's prepare/ is compiled for x86-64-v3 (make_prepare_tool.py, -march=x86-64-v3: AVX, AVX2, FMA, BMI1 and BMI2,
+# MOVBE, F16C, LZCNT). A player's Intel Celeron N4120 (no AVX2, no AVX at all), 8 GB, Windows, made the whole build, then the
+# preparation stopped at once on an instruction the processor does not have (exit 0xC000001D, 25/11/2026). The player's
+# decision: such a PC does not run it. The check says so at step 3, and the console prepares the shaders itself at its first
+# start instead (about an hour on a standard PS5; on such a PC the preparation would take about as long), set up by the
+# build by itself (step 7, setup_console_prepare), with no error.
+CPU_V3_FLAGS = ("avx2", "bmi1", "bmi2", "fma", "movbe", "f16c", "abm")   # (/proc/cpuinfo's names; abm: LZCNT)
+# GRAPNEL_CPU_V3=0: as if this PC's processor had no x86-64-v3 (the console prepares the shaders); 1: as if it had (the PC
+# prepares them, as before). For tests (a PC without AVX2 played on one with it), and as a player's way out should the
+# detection be wrong; anything else is not taken (the processor is read)
+CPU_V3_ENV = "GRAPNEL_CPU_V3"
+PF_AVX_INSTRUCTIONS_AVAILABLE, PF_AVX2_INSTRUCTIONS_AVAILABLE = 39, 40   # (windows: IsProcessorFeaturePresent)
+
+
+def cpu_v3_from_cpuinfo(text):
+    """/proc/cpuinfo's text: (whether every processor has x86-64-v3's flags, the flags missing, the model name). Every
+    processor's "flags" line counts (a flag one of them lacks is missing); a text with no "flags" line (another architecture's,
+    or nothing read) has them all missing"""
+    common, name = None, ""
+    for line in text.splitlines():
+        key, _, value = line.partition(":")
+        key = key.strip()
+        if key == "flags":
+            flags = set(value.split())
+            common = flags if common is None else common & flags
+        elif key == "model name" and not name:
+            name = " ".join(value.split())
+    missing = [f for f in CPU_V3_FLAGS if f not in (common or ())]
+    return not missing, missing, name
+
+
+def numpy_cpu_features():
+    """numpy's own reading of the processor ({"AVX2": True, "FMA3": ..., ...}: CPUID, and the system's AVX state through
+    XGETBV, numpy/_core/src/common/npy_cpu_features.c), None when numpy is not there or does not say. The builder's Python has
+    numpy (the translator's), the Windows package's too"""
+    try:
+        try:
+            from numpy._core._multiarray_umath import __cpu_features__ as features   # (numpy 2)
+        except ImportError:
+            from numpy.core._multiarray_umath import __cpu_features__ as features    # (numpy 1.20 and after)
+        return {k: bool(v) for k, v in dict(features).items()}
+    except Exception:   # (no numpy, or another layout: not known, so not taken)
+        return None
+
+
+def windows_cpu_name():
+    """(windows) The processor's name as the system has it (the registry's ProcessorNameString), "" when not found"""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as k:
+            return " ".join(str(winreg.QueryValueEx(k, "ProcessorNameString")[0]).split())
+    except (OSError, ImportError):
+        return ""
+
+
+def cpu_facts():
+    """Whether this PC's processor runs the toolchain's shader preparation (x86-64-v3), and what that was read from:
+    {"v3": bool, "name": the processor's name or "", "read": what was read (for the log), "forced": bool}.
+      - GRAPNEL_CPU_V3=0 or 1 (CPU_V3_ENV) says it instead;
+      - Linux: /proc/cpuinfo, every processor's flags: avx2 bmi1 bmi2 fma movbe f16c abm (LZCNT);
+      - Windows: IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE, 40). Windows has no bit for FMA, BMI2 or MOVBE, but
+        every processor with AVX2 has them (x86-64-v3 counts them together). When it says no (a Windows that does not fill
+        that bit says no as well), numpy's own reading of the processor (CPUID and the system's AVX state): AVX2, FMA3 and
+        F16C. No code of the builder's own is run on the processor.
+    A wrong "no" only sends the shaders to the console; a wrong "yes" would stop the preparation on its first such
+    instruction: so what cannot be read is a "no", and either source's "yes" is taken only when it read the processor"""
+    forced = os.environ.get(CPU_V3_ENV, "").strip()
+    if forced in ("0", "1"):
+        return {"v3": forced == "1", "name": "", "read": "%s=%s (set: the processor is not read)" % (CPU_V3_ENV, forced),
+                "forced": True}
+    note = " (%s=%s is not 0 or 1: not taken)" % (CPU_V3_ENV, forced) if forced else ""
+    if os.name == "nt":
+        name = windows_cpu_name()
+        try:
+            import ctypes
+            present = ctypes.windll.kernel32.IsProcessorFeaturePresent
+            avx2, avx = bool(present(PF_AVX2_INSTRUCTIONS_AVAILABLE)), bool(present(PF_AVX_INSTRUCTIONS_AVAILABLE))
+            read = "IsProcessorFeaturePresent: AVX2 (%d) %s, AVX (%d) %s" % (PF_AVX2_INSTRUCTIONS_AVAILABLE, "yes" if avx2 else "no",
+                                                                            PF_AVX_INSTRUCTIONS_AVAILABLE, "yes" if avx else "no")
+        except (OSError, AttributeError, ImportError) as e:
+            avx2, read = False, "IsProcessorFeaturePresent not answered (%s)" % e
+        v3 = avx2
+        if not avx2:
+            np = numpy_cpu_features()
+            if np is None:
+                read += "; numpy's reading of the processor: not there"
+            else:
+                want = ("AVX2", "FMA3", "F16C")
+                v3 = all(np.get(k) for k in want)
+                read += "; numpy's reading of the processor: %s" % ", ".join("%s %s" % (k, "yes" if np.get(k) else "no") for k in want)
+        return {"v3": v3, "name": name, "read": read + note, "forced": False}
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError as e:
+            return {"v3": False, "name": "", "read": "/proc/cpuinfo not read (%s)%s" % (e, note), "forced": False}
+        v3, missing, name = cpu_v3_from_cpuinfo(text)
+        read = "/proc/cpuinfo: %s %s" % (" ".join(CPU_V3_FLAGS), "all there" if v3 else "missing: " + " ".join(missing))
+        return {"v3": v3, "name": name, "read": read + note, "forced": False}
+    return {"v3": False, "name": "", "read": "%s: not read (Linux and Windows only)%s" % (sys.platform, note), "forced": False}
+
+
+def cpu_line(cpu):
+    """The check's line for the processor: "ok: ..." when it runs the shaders' preparation, else "note: ..." (not an error)"""
+    name = " (%s)" % cpu["name"] if cpu.get("name") else \
+        " (%s=%d says so)" % (CPU_V3_ENV, 1 if cpu["v3"] else 0) if cpu.get("forced") else ""
+    if cpu["v3"]:
+        return "ok: the processor%s has x86-64-v3 (AVX2), which the shaders' preparation on this PC needs" % name
+    return ("note: the processor%s has no x86-64-v3 (AVX2), which the shaders' preparation on a PC needs: this PC does not run "
+            "it, and the console prepares the shaders itself at its first start instead (about an hour on a standard PS5; on "
+            "this PC it would take about as long). The build sets that up by itself (step 7)" % name)
+
+
 def quiet_crashes():
     """(windows) No window when a program the builder starts crashes, the preparation or a compiler: the error mode the
     children inherit (SEM_NOGPFAULTERRORBOX: Windows' error reporting, and a debugger's dialog under Wine, are not started;
@@ -179,6 +295,7 @@ class Options:
     measure: bool = False            # sample the build's memory (Linux)
     no_shaders: bool = False         # no list of the game's shaders, so no preparation: the game compiles them in play
     no_prepare: bool = False         # the lists, but no preparation on this PC (a toolchain without prepare/): the game compiles in play
+                                     # (on a processor without x86-64-v3 the console's own preparation, set up as without it)
     prepare_workers: int = 0         # the preparation's compile threads (0: every core; the memory free decides how many work)
     flat_dir: str = ""               # where the flat copy of a .nup whose game files are compressed goes (default: out)
 
@@ -738,6 +855,74 @@ def read_progress(path):
     return out
 
 
+# ---- the console's own preparation, when this PC does not prepare (lot 82) ----
+# What it reads beside the game (gpu/vk/vk_draw.cpp console_prepare_*, the launch screen's Shaders page): the census
+# <prefix>_shaders.bin (PRIVATE: the game's shaders' code), the pipelines' list <prefix>_pipeline_states_shipped.bin, and
+# HOOKSHOT_PS5_PREPARE=1 in <prefix>_env.txt, which makes the Shaders page offer "Prepare the shaders" (about an hour on a
+# standard PS5; "Later" stops it and the next start goes on). Until 0.2.5 the window's fallback button did it (grapnel_gui.py);
+# now the build's step 7 does it by itself on a PC whose processor does not run the PC's preparation, and the window's button
+# calls the same function
+CONSOLE_PREP_SETTING = "HOOKSHOT_PS5_PREPARE"
+CONSOLE_PREP_COMMENT = ("# (the builder: this PC did not prepare the shaders; the console prepares them itself at its first start, about an "
+                        "hour on a standard PS5, from the launch screen's Shaders page)")
+
+
+def console_prep_names():
+    """(census, pipelines' list): the names the console reads beside the game"""
+    return name_prefix() + "_shaders.bin", name_prefix() + "_pipeline_states_shipped.bin"
+
+
+def env_setting(path, name):
+    """The value the console takes for name from a settings file: its last line for it (host/hos_main.c: the file's later
+    lines replace its earlier ones); None when no line sets it or the file cannot be read"""
+    value = None
+    try:
+        with open(path, encoding="utf-8-sig", errors="replace") as f:
+            for line in f:
+                s = line.strip()
+                if s and not s.startswith("#") and "=" in s:
+                    k, v = s.split("=", 1)
+                    if k.strip() == name:
+                        value = v.strip()
+    except OSError:
+        return None
+    return value
+
+
+def console_prepare_ready(data):
+    """The data folder is set up for the console's own preparation: both files beside the game, and the settings file's
+    HOOKSHOT_PS5_PREPARE on (1, or force)"""
+    census, states = console_prep_names()
+    return (os.path.isfile(os.path.join(data, census)) and os.path.isfile(os.path.join(data, states)) and
+            env_setting(os.path.join(data, name_prefix() + "_env.txt"), CONSOLE_PREP_SETTING) not in (None, "", "0"))
+
+
+def setup_console_prepare(data, census, states):
+    """The console's own shader preparation set up in the data folder data: the census and the pipelines' list (the files the
+    build's step 6 made, in the work folder) copied beside the game under the names the console reads, and the line
+    HOOKSHOT_PS5_PREPARE=1 added at the end of its settings file, once (not when the file already ends up with it on).
+    -> {"files": [the two names], "setting_added": bool}; BuildError("prepare-console") when a file is not there"""
+    names = console_prep_names()
+    env = os.path.join(data, name_prefix() + "_env.txt")
+    missing = [p for p in (census, states) if not os.path.isfile(p)] + ([data] if not os.path.isdir(data) else [])
+    if missing:
+        raise BuildError("prepare-console", "the console's own preparation cannot be set up: %s not there (build again: step 6 "
+                         "makes the shaders' lists)" % ", ".join(missing))
+    for src, n in zip((census, states), names):
+        shutil.copyfile(src, os.path.join(data, n) + ".part")
+        os.replace(os.path.join(data, n) + ".part", os.path.join(data, n))
+    added = env_setting(env, CONSOLE_PREP_SETTING) in (None, "", "0")   # (=1 or =force there already: as it is)
+    if added:
+        try:
+            with open(env, "rb") as f:
+                ends = f.read()[-1:] in (b"", b"\n")
+        except OSError:
+            ends = True
+        with open(env, "a", encoding="utf-8", newline="\n") as f:
+            f.write(("" if ends else "\n") + "\n%s\n%s=1\n" % (CONSOLE_PREP_COMMENT, CONSOLE_PREP_SETTING))
+    return {"files": list(names), "setting_added": added}
+
+
 # ---- what the checkout says about the title ----
 
 def supported_build():
@@ -1022,6 +1207,10 @@ class Builder:
         self.shader_files = None
         self.prep_tool = None
         self.prepared = None
+        self.cpu = None              # (cpu_facts(): whether this PC's processor runs the shaders' preparation; check() reads it)
+        self.console_why = None      # (why the console prepares the shaders itself: "cpu", this processor has no x86-64-v3;
+                                     # "illegal-instruction", the PC's preparation stopped on one. None: it does not)
+        self.console_prep = None     # (what step 7 set up for the console's own preparation: manifest.json's console_prepare)
         self.o.flat_dir = os.path.abspath(self.o.flat_dir) if self.o.flat_dir else self.o.out
         self.game_file = None        # (what the console is given: the .nup, or its flat copy; flatten() says)
         self.files_found = None      # (the dump's files against the sound dump's reference: say_files)
@@ -1101,7 +1290,8 @@ class Builder:
                 raise BuildError("toolchain", "the console toolchain has no %s" % f)
         self.env = tools_env(t, self.llvm, self.o.work or None)
         self.prep_tool = None
-        if not (self.o.no_shaders or self.o.no_prepare):
+        self._check_cpu()
+        if not (self.o.no_shaders or self.o.no_prepare or self.console_why):
             self.prep_tool, info = prepare_tool(t)
             self.tool_notes["prepare"] = "%s %s (%s), shader stamp %s, driver %s" % (info["name"], info["version"], info["made"],
                                                                                     info["shader_stamp"], info["driver_build_id"][:12])
@@ -1147,6 +1337,16 @@ class Builder:
         self.ev.info("ok: %s compiles for x86_64-sie-ps5 with clang %s" % ("clang, the recipe's arguments" if t.get("recipe") else
                                                                           "prospero-clang", LLVM_VERSION))
         return self.tool_notes
+
+    def _check_cpu(self):
+        """This PC's processor (cpu_facts): without x86-64-v3 the PC's preparation is not run, its tool not even looked at, and
+        step 7 sets up the console's own instead (console_why "cpu"); said, not an error. --no-prepare on such a PC does the
+        same (on it the console's preparation is the only one); --no-shaders: nothing"""
+        self.cpu = cpu_facts()
+        self.ev.info(cpu_line(self.cpu))
+        self.ev.log("the processor: %s; read: %s" % (self.cpu.get("name") or "(no name)", self.cpu["read"]))
+        self.console_why = "cpu" if not (self.o.no_shaders or self.cpu["v3"]) else None
+        return self.cpu
 
     def _native_tool(self):
         """PS5_Vulkan's ps5-native-tool runs here; if not (an older C library), it is built again from the folder's sources with this
@@ -1495,8 +1695,9 @@ class Builder:
 
     def _shaders(self):
         """<work>/shaders/<prefix>_shaders.bin (the census, from the player's romfs: ~290 MB of its 26 GB read out of the .nup) and
-        <prefix>_pipeline_states_shipped.bin (from this checkout's lists), for step 7. The console no longer reads them (lot 83:
-        it gets the driver's cache step 7 makes)"""
+        <prefix>_pipeline_states_shipped.bin (from this checkout's lists), for step 7. The console reads them only when it
+        prepares the shaders itself (step 7 then puts them beside the game: a PC whose processor has no x86-64-v3); otherwise
+        it gets the driver's cache step 7 makes (lot 83)"""
         o, work, data = self.o, self.o.work, self.data
         census_name, list_name = name_prefix() + "_shaders.bin", name_prefix() + "_pipeline_states_shipped.bin"
         for n in (census_name, list_name):
@@ -1566,6 +1767,54 @@ class Builder:
             return self._step(7, self._prepare)
 
     def _prepare(self):
+        """The shaders' preparation: on this PC (_prepare_on_pc), or, on a PC whose processor does not run it (no x86-64-v3:
+        check() said so; or its run stopped on an instruction the processor does not have), the console's own preparation set
+        up beside the game (_console_prepare), with no error; --no-shaders, or --no-prepare on a PC that runs it: nothing (the
+        console compiles the shaders as the game plays)"""
+        o = self.o
+        dst_cache = os.path.join(self.title, "radv-shader-cache")
+        progress_name = name_prefix() + "_prepare_progress.txt"
+
+        def clear():
+            for p in (dst_cache, os.path.join(self.data, progress_name)):
+                if os.path.isdir(p):
+                    shutil.rmtree(p)
+                elif os.path.isfile(p):
+                    os.remove(p)
+        clear()
+        self.prepared = self.console_prep = None
+        if not o.no_shaders and self.console_why:
+            return self._console_prepare()
+        if o.no_shaders or o.no_prepare or self.prep_tool is None:
+            self.ev.info("no shader preparation (%s): the console compiles the game's shaders as you play"
+                         % ("--no-shaders" if o.no_shaders else "--no-prepare"))
+            return None
+        try:
+            return self._prepare_on_pc(dst_cache, progress_name)
+        except BuildError as e:
+            if e.code != "prepare-cpu":
+                raise
+            # (the check found x86-64-v3, or GRAPNEL_CPU_V3=1 said so, and the tool still met an instruction this processor does
+            # not have: said, and the console's own preparation instead, as on a PC without it)
+            self.ev.info("note: " + e.message)
+            clear()
+            self.prepared, self.console_why = None, "illegal-instruction"
+            return self._console_prepare()
+
+    def _console_prepare(self):
+        """The console's own preparation set up beside the game (setup_console_prepare: the census and the pipelines' list
+        step 6 made, HOOKSHOT_PS5_PREPARE=1 in the settings file, once); manifest.json's console_prepare says it"""
+        sf = self.shader_files
+        r = setup_console_prepare(self.data, sf["census_path"], sf["states_path"])
+        self.console_prep = {"why": self.console_why, "files": r["files"], "setting": "%s=1" % CONSOLE_PREP_SETTING,
+                             "processor": (self.cpu or {}).get("name") or None, "read": (self.cpu or {}).get("read")}
+        self.ev.info("the console prepares the shaders itself at its first start (about an hour on a standard PS5; \"Later\" stops "
+                     "it, and the next start goes on): %s and %s put beside the game in %s, %s=1 in %s_env.txt%s"
+                     % (r["files"][0], r["files"][1], self.data, CONSOLE_PREP_SETTING, name_prefix(),
+                        "" if r["setting_added"] else " (there already)"))
+        return None
+
+    def _prepare_on_pc(self, dst_cache, progress_name):
         """The console's own preparation (gpu/vk/vk_draw.cpp console_prepare_*), run here by the toolchain's prepare/ on every core
         into <work>/prepare/radv-shader-cache, as the console's driver keeps its cache; checked (each part of the database whole, at
         least PREP_MIN_ENTRIES entries, the progress file finished for the console's driver, nothing left out, and a second pass
@@ -1573,18 +1822,6 @@ class Builder:
         driver's cache folder on the console, /app0/radv-shader-cache) with its progress file, also beside the game for the launch
         screen's check (<prefix>_prepare_progress.txt). Again from where it stopped when a run stops short of memory"""
         o, work = self.o, self.o.work
-        dst_cache = os.path.join(self.title, "radv-shader-cache")
-        progress_name = name_prefix() + "_prepare_progress.txt"
-        for p in (dst_cache, os.path.join(self.data, progress_name)):
-            if os.path.isdir(p):
-                shutil.rmtree(p)
-            elif os.path.isfile(p):
-                os.remove(p)
-        if o.no_shaders or o.no_prepare or self.prep_tool is None:
-            self.ev.info("no shader preparation (%s): the console compiles the game's shaders as you play"
-                         % ("--no-shaders" if o.no_shaders else "--no-prepare"))
-            self.prepared = None
-            return None
         tool, sf = self.prep_tool, self.shader_files
         prep = os.path.join(work, "prepare")
         run, cache = os.path.join(prep, "run"), os.path.join(prep, "radv-shader-cache")
@@ -1704,10 +1941,14 @@ class Builder:
             except BuildError as e:
                 code = int(re.search(r"exit (-?\d+)", e.message).group(1)) if re.search(r"exit (-?\d+)", e.message) else -1
                 if illegal_instruction(code):
-                    raise BuildError("prepare-cpu", "%s on this PC stopped on an instruction this processor does not have (exit %d). "
-                                     "Please report it with your processor's name (Grapnel's issues). Meanwhile, build on another PC, "
-                                     "or build with --no-prepare: the console then prepares the shaders at its first start"
-                                     % (what, code), e.details, log)
+                    # (0.2.4 and 0.2.5 said "build with --no-prepare: the console then prepares the shaders at its first start":
+                    # wrong, --no-prepare leaves them to be compiled in play. The console's own preparation needs its files and
+                    # setting beside the game: _prepare sets them up when this is raised, and says this)
+                    raise BuildError("prepare-cpu", "%s on this PC stopped on an instruction this processor does not have (exit %d): "
+                                     "it needs x86-64-v3 (AVX2). The console prepares the shaders itself at its first start "
+                                     "instead (about an hour on a standard PS5), and the build sets that up by itself (%s=0 sends "
+                                     "the next builds there at once). Please report it with your processor's name (Grapnel's "
+                                     "issues)" % (what, code, CPU_V3_ENV), e.details, log)
                 if (code not in (13, 14, SILENT_EXIT) and not crashed(code)) or attempt == PREP_TRIES - 1:
                     raise BuildError("prepare-failed", "%s on this PC ended (exit %d)%s" % (
                         what, code, ": short of memory again and again; free some memory or use --prepare-workers" if code == 13 else ""),
@@ -1741,20 +1982,36 @@ class Builder:
         else:
             game_en = GAME_AS_IS_EN % {"gb": game_gb, "data": self.data_name}
             game_fr = GAME_AS_IS_FR % {"gb": game_gb.replace(".", ","), "data": self.data_name}
+        console = self.console_prep   # (the console prepares the shaders itself: its two files beside the game)
+        census_name, states_name = console_prep_names()
+        prep = {"id": title_id, "data": self.data_name, "env": env_name, "census": census_name, "states": states_name}
+        if prepared:
+            prep_en, prep_fr = PREP_EN % prep, PREP_FR % prep
+        elif console:
+            stopped = console.get("why") == "illegal-instruction"
+            prep_en = CONSOLE_PREP_EN % dict(prep, why=CONSOLE_WHY_STOPPED_EN if stopped else CONSOLE_WHY_CPU_EN)
+            prep_fr = CONSOLE_PREP_FR % dict(prep, why=CONSOLE_WHY_STOPPED_FR if stopped else CONSOLE_WHY_CPU_FR)
+        else:
+            prep_en, prep_fr = NO_PREP_EN % prep, NO_PREP_FR % prep
+        # (the data folder's files beside image.bin: those step 2 lists, and those a /data/hookshot install takes)
+        more = (["prompts/"] if icons else []) + ([progress_name] if prepared else []) + ([census_name, states_name] if console else [])
+
+        def after_image(word):   # (", a, b and c" after "image.bin")
+            names = ["image.bin"] + more
+            return "" if len(names) == 1 else (", ".join(names[:-1]) + " %s %s" % (word, names[-1]))[len("image.bin"):]
         fill = {"v": VERSION, "id": title_id, "data": self.data_name, "env": env_name, "game_en": game_en, "game_fr": game_fr,
-                "icons": (", prompts/" if icons else "") + (", " + progress_name if prepared else ""),
-                "prep_en": (PREP_EN if prepared else NO_PREP_EN) % {"id": title_id},
-                "prep_fr": (PREP_FR if prepared else NO_PREP_FR) % {"id": title_id}}
+                "icons": "".join(", " + n for n in more), "prep_en": prep_en, "prep_fr": prep_fr}
         with open(os.path.join(out, "INSTALL.en.txt"), "w", encoding="utf-8") as f:
-            f.write(INSTALL_EN % dict(fill, icons2=(", prompts/" if icons else "") + (" and " + progress_name if prepared else "")))
+            f.write(INSTALL_EN % dict(fill, icons2=after_image("and")))
         with open(os.path.join(out, "INSTALL.fr.txt"), "w", encoding="utf-8") as f:
-            f.write(INSTALL_FR % dict(fill, icons2=(", prompts/" if icons else "") + (" et " + progress_name if prepared else "")))
+            f.write(INSTALL_FR % dict(fill, icons2=after_image("et")))
         with open(os.path.join(out, "PRIVATE.txt"), "w", encoding="utf-8") as f:
             f.write("PRIVATE / PRIVÉ: homebrew/%s/eboot.bin holds the game's code translated and compiled, data/%s/image.bin is the game's\n"
                     "program, data/%s/prompts/ holds the game's font, textures and layouts, homebrew/%s/radv-shader-cache/ the game's\n"
-                    "shaders compiled (and the work folder's shaders/ their code). Never share them: only copy them to your own console.\n"
+                    "shaders compiled (and the work folder's shaders/ their code%s). Never share them: only copy them to your own console.\n"
                     "Ne les partagez jamais : copiez-les seulement sur votre console.\n"
-                    % (title_id, self.data_name, self.data_name, title_id))
+                    % (title_id, self.data_name, self.data_name, title_id,
+                       ", copied to data/%s/%s for the console" % (self.data_name, census_name) if console else ""))
         files = {}
         for base in (title, data):
             for d, _, fs in os.walk(base):
@@ -1770,7 +2027,9 @@ class Builder:
                     "imports": seen.get("imports"), "imports_total": seen.get("imports_total"), "shader_stamp": seen.get("shader_stamp"),
                     "title_art": self.art, "lift_env": LIFT_ENV, "llvm": self.tool_notes.get("llvm"),
                     "shaders": None if self.shader_files is None else {k: v for k, v in self.shader_files.items() if not k.endswith("_path")},
-                    "prepared": self.prepared,
+                    "prepared": self.prepared, "console_prepare": self.console_prep,
+                    "processor": None if self.cpu is None else {"x86_64_v3": self.cpu["v3"], "name": self.cpu.get("name") or None,
+                                                                "read": self.cpu.get("read")},
                     "game_file": {"path": self.game_file, "bytes": os.path.getsize(self.game_file), "source": self.o.nup,
                                   "flat": self.flat is not None, **self.files_note(),
                                   "flat_copy": None if self.flat is None else {k: v for k, v in self.flat.items() if k != "path"}},
@@ -1814,6 +2073,9 @@ class Builder:
             os.path.getsize(eb), crc32(eb), sha256(eb), crc32(os.path.join(self.data, "image.bin"))))
         if self.prepared:
             self.ev.info("radv-shader-cache: %d entries, %d bytes" % (self.prepared["entries"], self.prepared["bytes"]))
+        elif self.console_prep:
+            self.ev.info("the shaders: the console prepares them itself at its first start (about an hour on a standard PS5); "
+                         "data/%s holds what it reads (INSTALL.en.txt)" % self.data_name)
         return manifest
 
 
@@ -1857,6 +2119,21 @@ PREP_EN = """   The game's shaders are prepared already: homebrew/%(id)s/radv-sh
    drawn. After a new build, delete the console's old /data/homebrew/%(id)s/radv-shader-cache before you copy the title
    folder.
 """
+CONSOLE_PREP_EN = """   The console prepares the game's shaders itself, at its first start, once: about an hour on a standard PS5.
+   %(why)s
+   The launch screen's SHADERS page offers "Prepare the shaders" ("Later" stops it, and the next start goes on where it
+   stopped); then the console's driver finds them in its cache, and the game does not stop to compile them as you play.
+   What it reads is in data/%(data)s: %(census)s (the list of the game's shaders, made from your game: PRIVATE),
+   %(states)s, and the line HOOKSHOT_PS5_PREPARE=1 at the end of %(env)s.
+   If you copy into /data/hookshot (step 2), copy those two files there too, and add that line at the end of your own
+   %(env)s.
+   The console keeps what it prepared in /data/homebrew/%(id)s/radv-shader-cache (its progress in
+   /data/%(data)s/hookshot_prepare_progress.txt): keep that folder when you copy a new build (the builder's step 6 does). If
+   you delete it, delete the progress file too, and the console prepares them again.
+"""
+CONSOLE_WHY_CPU_EN = ("This PC's processor has no AVX2 (x86-64-v3), which the preparation on a PC needs (on such a PC it would take about\n"
+                      "   as long).")
+CONSOLE_WHY_STOPPED_EN = "The preparation on this PC stopped on an instruction its processor does not have."
 NO_PREP_EN = """   The first starts compile the game's shaders as you play (stutters, and more memory) until they are all in the driver's cache,
    which stays in the title folder.
 """
@@ -1866,6 +2143,22 @@ PREP_FR = """   Les shaders du jeu sont déjà préparés : homebrew/%(id)s/radv
    connaît est encore compilé à sa première apparition. Après une nouvelle construction, effacez l'ancien
    /data/homebrew/%(id)s/radv-shader-cache de la console avant de copier le dossier du titre.
 """
+CONSOLE_PREP_FR = """   La console prépare elle-même les shaders du jeu, à son premier lancement, une seule fois : environ une heure sur une
+   PS5 standard.
+   %(why)s
+   La page SHADERS de l'écran de lancement propose « Préparer les shaders » (« Plus tard » l'arrête, et le lancement suivant
+   reprend où elle en était) ; ensuite le pilote de la console les trouve dans son cache, et le jeu ne s'arrête pas pour les
+   compiler en jouant. Ce qu'elle lit est dans data/%(data)s : %(census)s (la liste des shaders du jeu, faite
+   à partir de votre jeu : PRIVÉ), %(states)s, et la ligne HOOKSHOT_PS5_PREPARE=1 à la fin de %(env)s.
+   Si vous copiez dans /data/hookshot (étape 2), copiez-y aussi ces deux fichiers, et ajoutez cette ligne à la fin de votre
+   propre %(env)s.
+   La console garde ce qu'elle a préparé dans /data/homebrew/%(id)s/radv-shader-cache (où elle en est : dans
+   /data/%(data)s/hookshot_prepare_progress.txt) : gardez ce dossier quand vous copiez une nouvelle construction (l'étape 6 du
+   constructeur le fait). Si vous l'effacez, effacez aussi ce fichier, et la console les prépare à nouveau.
+"""
+CONSOLE_WHY_CPU_FR = ("Le processeur de ce PC n'a pas l'AVX2 (x86-64-v3), dont la préparation sur un PC a besoin (sur un tel PC, elle\n"
+                      "   durerait à peu près autant).")
+CONSOLE_WHY_STOPPED_FR = "La préparation sur ce PC s'est arrêtée sur une instruction que son processeur n'a pas."
 NO_PREP_FR = """   Les premiers lancements compilent les shaders du jeu pendant que vous jouez (saccades, et plus de mémoire), jusqu'à ce
    qu'ils soient tous dans le cache du pilote, qui reste dans le dossier du titre.
 """

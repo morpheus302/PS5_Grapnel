@@ -339,7 +339,10 @@ Démarrer
    5 les shaders, 6 l'envoi à la console. Le journal est caché : « Journal + » l'affiche.
 
 Les shaders (étape 5) : le PC compile pour la console tous les shaders du jeu, dans le cache de son pilote (15 à 45
-minutes) ; la console n'a plus rien à compiler en jouant. Le cache fait sous Windows est celui que fait Linux.
+minutes) ; la console n'a plus rien à compiler en jouant. Le cache fait sous Windows est celui que fait Linux. Sur un PC
+dont le processeur n'a pas l'AVX2 (bien des Celeron, Pentium et Atom), le PC ne les prépare pas : la vérification le dit,
+et la console les prépare elle-même à son premier lancement (environ une heure sur une PS5 standard) ; la construction le
+met en place d'elle-même.
 
 L'envoi à la console (étape 6, facultative) : l'adresse IP de la console, puis « Envoyer ». Il passe par FTP : le serveur
 FTP de la console s'il y en a un (port 2121), sinon ftpsrv, envoyé à son chargeur d'ELF (port 9021). Vos parties sont
@@ -381,7 +384,9 @@ of Time, Nintendo Switch 2 Edition, with its update v131072). This folder holds 
    console. The log is hidden: "Log +" shows it.
 
 The shaders (step 5): the PC compiles every shader of the game for the console, into its driver's cache (15 to 45 minutes):
-the console then has nothing to compile as you play. The cache made on Windows is the one Linux makes.
+the console then has nothing to compile as you play. The cache made on Windows is the one Linux makes. On a PC whose
+processor has no AVX2 (many Celeron, Pentium and Atom processors), the PC does not prepare them: the check says so, and the
+console prepares them itself at its first start (about an hour on a standard PS5); the build sets it up by itself.
 
 Sending to the console (step 6, optional): the console's IP address, then "Send". It goes over FTP: the console's FTP
 server if one runs (port 2121), else ftpsrv, sent to its ELF loader (port 9021). Your saves are copied to this PC first (in

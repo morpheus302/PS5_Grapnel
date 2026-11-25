@@ -13,11 +13,14 @@ The pages, as the player validated them (notes-agents/assistant-constructeur.md,
                 checked first (what to do when there is too little), then the copy (grapnel_build.py --flatten) with its bar;
                 Next once it is made and checked (or taken again: one made before from the same file)
     2 Options   the output folder; the controller button icons (on by default); Advanced: the compile's memory (0 = automatic)
-    3 Check     runs by itself on arrival: a list of green ticks (tools, Python, ZBIC, a test compile, the .nup, disk, memory,
-                paths); a problem says what to do; Next only when all is green
+    3 Check     runs by itself on arrival: a list of green ticks (tools, Python, ZBIC, a test compile, the processor, the .nup,
+                disk, memory, paths); a problem says what to do; Next only when all is green (a processor without x86-64-v3 is
+                a note, in blue, not a problem)
     4 Game      the build (about 30 min): a bar, the step, the time left; "Chain the shaders automatically" (on by default)
-    5 Shaders   the driver's cache prepared on this PC (the core's step 7); where this PC cannot (Windows, until the
-                preparation is ported), the page says so and sets up the fallback: the console's own preparation
+    5 Shaders   the driver's cache prepared on this PC (the core's step 7); where this PC does not (a processor without
+                x86-64-v3, AVX2: the check's Processor line says so, and the build sets up by itself the console's own
+                preparation, at its first start; or a toolchain without prepare/: the page's fallback button), the page
+                says what was done
     6 Console   the title sent to the console over FTP (grapnel_send.py), to its internal storage or its extension disk
                 (/mnt/ext1), or how to copy the folders by hand
 On every page: the steps along the top (done ones ticked) with Back; at the bottom Open the folder, Copy the report, the log
@@ -157,12 +160,15 @@ T = {
         "check_again": "Vérifier à nouveau",
         "rows": {"llvm": "Compilateur (LLVM 19.1.7)", "toolchain": "Outils de la console", "native": "Outil de signature",
                  "python": "Python et ses paquets", "zbic": "Décompression du jeu (ZBIC)", "compile": "Compilation d'essai pour la PS5",
-                 "prepare": "Préparation des shaders sur ce PC", "nup": "Fichier du jeu", "disk": "Place sur le disque",
-                 "memory": "Mémoire", "paths": "Chemins"},
+                 "cpu": "Processeur", "prepare": "Préparation des shaders sur ce PC", "nup": "Fichier du jeu",
+                 "disk": "Place sur le disque", "memory": "Mémoire", "paths": "Chemins"},
         "row_wait": "…", "check_running": "Vérification en cours…", "check_ok": "Tout est prêt.",
         "check_bad": "Un point n'est pas en ordre : voyez la ligne en rouge.",
-        "prep_windows": "pas encore sous Windows : la console préparera (étape 5)",
         "prep_missing": "absente : la console préparera (étape 5)",
+        "cpu_ok": "ok",
+        "cpu_console": "sans AVX2 : les shaders seront préparés par la console, à son premier lancement (environ une heure sur "
+                       "une PS5 standard), et non sur ce PC. Rien à faire : la construction le met en place.",
+        "prep_cpu": "par la console, à son premier lancement (processeur sans AVX2)",
         "disk_ok": "{gb:.0f} Go libres", "mem_ok": "{total:.0f} Go ({avail:.0f} Go libres)", "mem_low": "{total:.0f} Go : très lent",
         "paths_ok": "courts et lisibles",
         "p_build": "Étape 4 sur 6 : construire le jeu",
@@ -181,12 +187,24 @@ T = {
         "shaders_text": "Le PC compile pour la console tous les shaders du jeu dans le cache de son pilote : la console n'aura "
                         "rien à compiler en jouant, elle ne fera que vérifier.",
         "shaders_start": "Préparer les shaders »", "shaders_done": "Les shaders sont prêts : {entries} entrées dans le cache.",
-        "shaders_windows": "Ce PC ne peut pas encore préparer les shaders : l'outil de préparation n'existe que pour Linux pour "
-                           "l'instant (son portage pour Windows est en cours).\n\nLe secours : la console les prépare elle-même, "
-                           "au premier lancement, environ une heure sur une PS5 standard (« Plus tard » l'arrête et elle reprendra). "
-                           "Pour cela, le bouton ci-dessous met à côté du jeu la liste de ses shaders (faite à l'étape 4 à partir de "
-                           "votre jeu) et le réglage qui la propose. Sans cela, le jeu compilera les shaders en jouant (saccades).",
-        "shaders_no_tool": "Le dossier d'outils donné n'a pas la préparation des shaders (son dossier prepare/).\n\n",
+        "shaders_cpu": "Ce PC ne prépare pas les shaders : son processeur n'a pas l'AVX2 (x86-64-v3), dont l'outil de préparation "
+                       "a besoin. La console les prépare donc elle-même, à son premier lancement : environ une heure sur une PS5 "
+                       "standard (sur un tel PC, la préparation durerait à peu près autant). « Plus tard » l'arrête, et le "
+                       "lancement suivant reprend où elle en était.\n\nLa construction le met en place d'elle-même : la liste des "
+                       "shaders du jeu (faite à l'étape 4 à partir de votre jeu) et le réglage qui la propose vont à côté du jeu, "
+                       "dans data\\grapnel.",
+        "shaders_stopped": "La préparation sur ce PC s'est arrêtée sur une instruction que son processeur n'a pas. La console "
+                           "prépare donc les shaders elle-même, à son premier lancement : environ une heure sur une PS5 standard "
+                           "(« Plus tard » l'arrête, et le lancement suivant reprend où elle en était). La construction l'a mis en "
+                           "place : la liste des shaders du jeu et le réglage qui la propose sont dans data\\grapnel.\n\n"
+                           "Signalez-le avec le nom du processeur (issues de Grapnel) : ce PC aurait dû passer directement par la "
+                           "console.",
+        "shaders_no_tool": "Le dossier d'outils donné n'a pas la préparation des shaders pour ce système (son dossier prepare/).\n\n",
+        "shaders_console": "Le secours : la console les prépare elle-même, au premier lancement, environ une heure sur une PS5 "
+                           "standard (« Plus tard » l'arrête et elle reprendra). Pour cela, le bouton ci-dessous met à côté du jeu la "
+                           "liste de ses shaders (faite à l'étape 4 à partir de votre jeu) et le réglage qui la propose. Sans cela, "
+                           "le jeu compilera les shaders en jouant (saccades).",
+        "shaders_console_wait": "La construction le met en place à sa fin.",
         "fallback_btn": "Préparer pour la console (secours)",
         "fallback_done": "C'est prêt : copiez data\\grapnel avec ses deux fichiers de plus (étape 6). Au premier lancement, "
                          "la console proposera « Préparer les shaders ».",
@@ -284,8 +302,11 @@ T = {
             "nup-damaged": "Le fichier .nup est incomplet ou abîmé : copiez-le à nouveau depuis votre console.",
             "nup-wrong-game": "Ce .nup n'est pas le bon jeu ou pas la bonne version : il faut Zelda Ocarina of Time (Nintendo Switch "
                               "2 Edition) avec sa mise à jour v131072.",
-            "prepare-cpu": "La préparation des shaders s'est arrêtée sur une instruction que le processeur de ce PC n'a pas. "
-                           "Signalez-le avec le nom du processeur (issues de Grapnel). En attendant : construisez sur un autre PC.",
+            "prepare-cpu": "La préparation des shaders sur ce PC s'est arrêtée sur une instruction que son processeur n'a pas : la "
+                           "console les préparera elle-même à son premier lancement (environ une heure sur une PS5 standard), "
+                           "la construction le met en place. Signalez-le avec le nom du processeur (issues de Grapnel).",
+            "prepare-console": "La liste des shaders manque pour la préparation par la console : relancez la construction "
+                               "(étape 4).",
             "nup-codec": "Ce .nup range des fichiers du jeu sous une forme que le constructeur ne connaît pas : refaites le dump "
                          "avec un autre outil.",
             "flat-space": "Pas assez de place pour la copie du jeu : libérez de la place sur ce disque, ou choisissez un dossier "
@@ -392,12 +413,15 @@ T = {
         "check_again": "Check again",
         "rows": {"llvm": "Compiler (LLVM 19.1.7)", "toolchain": "The console's tools", "native": "Signing tool",
                  "python": "Python and its packages", "zbic": "Unpacking the game (ZBIC)", "compile": "Test compile for the PS5",
-                 "prepare": "Shader preparation on this PC", "nup": "Game file", "disk": "Disk space", "memory": "Memory",
-                 "paths": "Paths"},
+                 "cpu": "Processor", "prepare": "Shader preparation on this PC", "nup": "Game file", "disk": "Disk space",
+                 "memory": "Memory", "paths": "Paths"},
         "row_wait": "…", "check_running": "Checking…", "check_ok": "All set.",
         "check_bad": "Something is not right: see the red line.",
-        "prep_windows": "not on Windows yet: the console prepares (step 5)",
         "prep_missing": "missing: the console prepares (step 5)",
+        "cpu_ok": "ok",
+        "cpu_console": "no AVX2: the console will prepare the shaders at its first start (about an hour on a standard PS5), not "
+                       "this PC. Nothing to do: the build sets it up.",
+        "prep_cpu": "by the console, at its first start (a processor without AVX2)",
         "disk_ok": "{gb:.0f} GB free", "mem_ok": "{total:.0f} GB ({avail:.0f} GB free)", "mem_low": "{total:.0f} GB: very slow",
         "paths_ok": "short and readable",
         "p_build": "Step 4 of 6: build the game",
@@ -412,12 +436,22 @@ T = {
         "shaders_text": "The PC compiles every shader of the game for the console into its driver's cache: the console will have "
                         "nothing to compile in play, it only checks.",
         "shaders_start": "Prepare the shaders »", "shaders_done": "The shaders are ready: {entries} entries in the cache.",
-        "shaders_windows": "This PC cannot prepare the shaders yet: the preparation tool exists for Linux only for now (its Windows "
-                           "port is under way).\n\nThe fallback: the console prepares them itself at the first start, about an hour "
-                           "on a standard PS5 (\"Later\" stops it, and it carries on). For that, the button below puts the list of the "
-                           "game's shaders (made in step 4 from your game) beside the game, with the setting that offers it. Without it, "
-                           "the game compiles the shaders as it plays (stutters).",
-        "shaders_no_tool": "The toolchain folder given has no shader preparation (its prepare/ folder).\n\n",
+        "shaders_cpu": "This PC does not prepare the shaders: its processor has no AVX2 (x86-64-v3), which the preparation tool "
+                       "needs. So the console prepares them itself, at its first start: about an hour on a standard PS5 (on such a "
+                       "PC the preparation would take about as long). \"Later\" stops it, and the next start carries on where it "
+                       "stopped.\n\nThe build sets it up by itself: the list of the game's shaders (made in step 4 from your game) "
+                       "and the setting that offers it go beside the game, in data\\grapnel.",
+        "shaders_stopped": "The preparation on this PC stopped on an instruction its processor does not have. So the console "
+                           "prepares the shaders itself, at its first start: about an hour on a standard PS5 (\"Later\" stops it, "
+                           "and the next start carries on where it stopped). The build set it up: the list of the game's shaders "
+                           "and the setting that offers it are in data\\grapnel.\n\nPlease report it with your processor's name "
+                           "(Grapnel's issues): this PC should have gone to the console at once.",
+        "shaders_no_tool": "The toolchain folder given has no shader preparation for this system (its prepare/ folder).\n\n",
+        "shaders_console": "The fallback: the console prepares them itself at the first start, about an hour on a standard PS5 "
+                           "(\"Later\" stops it, and it carries on). For that, the button below puts the list of the game's shaders "
+                           "(made in step 4 from your game) beside the game, with the setting that offers it. Without it, the game "
+                           "compiles the shaders as it plays (stutters).",
+        "shaders_console_wait": "The build sets it up at its end.",
         "fallback_btn": "Set up the console's preparation (fallback)",
         "fallback_done": "Ready: copy data\\grapnel with its two more files (step 6). At the first start the console offers \"Prepare "
                          "the shaders\".",
@@ -608,6 +642,14 @@ def prepare_possible(toolchain):
     return system == ("windows-x64" if WINDOWS else "linux-x64")
 
 
+def this_cpu():
+    """grapnel_core.cpu_facts(): whether this PC's processor runs the shaders' preparation (x86-64-v3), what was read. On a
+    processor without it the window does as with no preparation tool (the check says so, the build passes --no-prepare) and
+    the build sets up the console's own preparation by itself"""
+    import grapnel_core
+    return grapnel_core.cpu_facts()
+
+
 def settings_path():
     base = os.environ.get("LOCALAPPDATA") if WINDOWS else os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     return os.path.join(base or TOP, "Grapnel", "builder-settings.json")
@@ -647,7 +689,7 @@ def has_work(out):
 def built(out):
     """What the output folder holds: {"game": eboot's manifest entry or None, "shaders": cache entries or None}. A game another
     builder made (an earlier test package's) is not this one's: the build makes it again, and its shaders with it"""
-    res = {"game": None, "shaders": None}
+    res = {"game": None, "shaders": None, "console": None}
     try:
         with open(os.path.join(out, "manifest.json"), encoding="utf-8") as f:
             m = json.load(f)
@@ -658,6 +700,8 @@ def built(out):
             res["game"] = next((v for k, v in m["files"].items() if k.replace("\\", "/").endswith("/eboot.bin")), None)
         if m.get("prepared") and os.path.isdir(os.path.join(out, "homebrew", "GRPN00001", "radv-shader-cache")):
             res["shaders"] = m["prepared"]
+        if m.get("console_prepare"):   # (the console prepares the shaders itself: what the build set up beside the game)
+            res["console"] = m["console_prepare"]
     except (OSError, ValueError, KeyError, StopIteration, TypeError):
         pass
     return res
@@ -751,7 +795,10 @@ class Assistant:
             self.t["title"] = "%s %s" % (self.t["title"], version)
             self.t["err_title"] = "%s %s" % (self.t["err_title"], version)
         self.parts = bundled(args)
-        self.can_prepare = prepare_possible(self.parts["toolchain"])
+        # (the PC prepares the shaders when the toolchain has the tool for this system and the processor runs it: x86-64-v3)
+        self.cpu = this_cpu()
+        self.tool_ok = prepare_possible(self.parts["toolchain"])
+        self.can_prepare = self.tool_ok and self.cpu["v3"]
         self.events = queue.Queue()
         self.job = None
         self.running = None          # (kind, start time): kind "check", "build", "shaders"
@@ -767,7 +814,10 @@ class Assistant:
         self.core_step = 0
         self.eta = self.step_frac = None
         self.check_rows, self.check_problems = {}, []
+        self.check_marks = {}        # (each check line's mark: True, None a warning, "info" a note; shown again as it was)
         self.settings = self.load_settings()
+        self.add_log("the processor: %s, x86-64-v3 %s (%s)" % (self.cpu.get("name") or "?", "yes" if self.cpu["v3"] else "no",
+                                                               self.cpu["read"]))
         root.title(self.t["title"])
         self.set_icon()
         self.layout()
@@ -1329,7 +1379,7 @@ class Assistant:
 
     # ---- page 3: the check ----
 
-    ROWS = ("llvm", "toolchain", "native", "python", "zbic", "compile", "prepare", "nup", "disk", "memory", "paths")
+    ROWS = ("llvm", "toolchain", "native", "python", "zbic", "compile", "cpu", "prepare", "nup", "disk", "memory", "paths")
     INFO = (("ok: LLVM", "llvm"), ("ok: toolchain", "toolchain"), ("ok: ps5-native-tool", "native"), ("ok: Python", "python"),
             ("ok: the ZBIC program", "zbic"), ("ok: clang", "compile"), ("ok: prospero-clang", "compile"),
             ("ok: the shader preparation", "prepare"), ("ok: the .nup", "nup"))
@@ -1355,7 +1405,7 @@ class Assistant:
         ttk.Button(self.body, text=t["check_again"], command=self.run_check).pack(anchor="w")
         if self.check_state and self.check_state[0] == self.inputs() and self.check_state[1]:
             for key in self.ROWS:
-                self.set_row(key, True, self.check_rows.get(key, ""))
+                self.set_row(key, self.check_marks.get(key, True), self.check_rows.get(key, ""))
             self.check_note.config(text=t["check_ok"], foreground="#1a7f37")
         else:
             self.root.after(200, self.run_check)
@@ -1380,16 +1430,19 @@ class Assistant:
         if not hasattr(self, "rows") or key not in self.rows or not self.rows[key][0].winfo_exists():
             return
         mark, lab = self.rows[key]
-        mark.config(text={True: "✓", False: "✗", None: "!"}[ok], foreground={True: "#1a7f37", False: "#b42318", None: "#b26a00"}[ok])
+        # (ok: True a pass, False a problem, None a warning, "info" a note that is no problem: the check stays green)
+        mark.config(text={True: "✓", False: "✗", None: "!", "info": "i"}[ok],
+                    foreground={True: "#1a7f37", False: "#b42318", None: "#b26a00", "info": "#1f5fa8"}[ok])
         lab.config(text=note)
         if ok is not False:
             self.check_rows[key] = note
+            self.check_marks[key] = ok
 
     def run_check(self):
         if self.running:
             return
         t = self.t
-        self.check_rows = {}
+        self.check_rows, self.check_marks = {}, {}
         for key in self.ROWS:
             self.set_row(key, None, t["row_wait"])
         self.check_note.config(text=t["check_running"], foreground="#555")
@@ -1414,8 +1467,14 @@ class Assistant:
             problems.append("paths")
         else:
             self.set_row("paths", True, t["paths_ok"])
-        if not self.can_prepare:
-            self.set_row("prepare", None, t["prep_windows"] if WINDOWS else t["prep_missing"])
+        # (the processor: without x86-64-v3 a note, not a problem; the console prepares the shaders, which the build sets up)
+        if self.cpu["v3"]:
+            self.set_row("cpu", True, t["cpu_ok"])
+        else:
+            self.set_row("cpu", "info", t["cpu_console"])
+            self.set_row("prepare", "info", t["prep_cpu"])
+        if self.cpu["v3"] and not self.can_prepare:
+            self.set_row("prepare", None, t["prep_missing"])
         self.check_problems = problems
         self.start("check", self.command("check"))
 
@@ -1445,9 +1504,8 @@ class Assistant:
         self.left_text.pack(side="left")
         self.time_text = ttk.Label(row, text="", foreground="#555")
         self.time_text.pack(side="right")
-        if chain:
-            ttk.Checkbutton(self.body, text=self.t["chain"], variable=self.chain_var,
-                            state="normal" if self.can_prepare else "disabled").pack(anchor="w", pady=(10, 0))
+        if chain and self.can_prepare:   # (a PC that does not prepare: nothing to chain, the shaders' page says why)
+            ttk.Checkbutton(self.body, text=self.t["chain"], variable=self.chain_var).pack(anchor="w", pady=(10, 0))
         self.result_text = ttk.Label(self.body, text="", wraplength=760, justify="left")
         self.result_text.pack(anchor="w", pady=(12, 0))
 
@@ -1459,17 +1517,13 @@ class Assistant:
 
     def page_shaders(self):
         t = self.t
-        self.heading(t["p_shaders"], t["shaders_text"])
         b = built(self.out())
-        if not self.can_prepare:
-            text = t["shaders_windows"] if WINDOWS else t["shaders_no_tool"] + t["shaders_windows"].split("\n\n", 1)[1]
-            ttk.Label(self.body, text=text, wraplength=760, justify="left").pack(anchor="w", pady=(4, 10))
-            ttk.Button(self.body, text=t["fallback_btn"], command=self.fallback).pack(anchor="w")
-            self.result_text = ttk.Label(self.body, text="", wraplength=760, justify="left")
-            self.result_text.pack(anchor="w", pady=(10, 0))
-            if self.fallback_ready():
-                self.result_text.config(text=t["fallback_done"], foreground="#1a7f37")
-            return
+        # (the PC does not prepare: its processor, or no tool; or it did, and its run stopped on an instruction the processor does
+        # not have, which the build turned into the console's preparation. An older build's console preparation made when the
+        # processor was taken for one without x86-64-v3 (GRAPNEL_CPU_V3=0) is not that: this PC prepares)
+        if not self.can_prepare or (b.get("console") or {}).get("why") == "illegal-instruction":
+            return self.page_shaders_console(b)
+        self.heading(t["p_shaders"], t["shaders_text"])
         self.progress_page()
         if self.running and self.running[0] in ("build", "shaders"):
             return
@@ -1480,32 +1534,49 @@ class Assistant:
             self.shaders_btn = ttk.Button(self.body, text=t["shaders_start"], command=self.run_shaders)
             self.shaders_btn.pack(anchor="w", pady=8)
 
+    def page_shaders_console(self, b):
+        """The shaders' page when this PC does not prepare them: the console's own preparation, at its first start. Its
+        processor has no x86-64-v3 (the build set it up by itself), or the PC's preparation stopped on an instruction the
+        processor does not have (the build switched to it), or the toolchain has no preparation for this system (the
+        fallback button sets it up: grapnel_core.setup_console_prepare, the build's own)"""
+        t = self.t
+        why = (b.get("console") or {}).get("why") or ("cpu" if not self.cpu["v3"] else "tool")
+        text = {"cpu": t["shaders_cpu"], "illegal-instruction": t["shaders_stopped"]}.get(why) or \
+            t["shaders_no_tool"] + t["shaders_console"]
+        self.heading(t["p_shaders"])
+        ttk.Label(self.body, text=text, wraplength=760, justify="left").pack(anchor="w", pady=(4, 10))
+        building = bool(self.running and self.running[0] in ("build", "shaders"))
+        ready = self.fallback_ready()
+        if not ready and not building:
+            ttk.Button(self.body, text=t["fallback_btn"], command=self.fallback).pack(anchor="w")
+        self.result_text = ttk.Label(self.body, text="", wraplength=760, justify="left")
+        self.result_text.pack(anchor="w", pady=(10, 0))
+        if ready and not building:
+            self.result_text.config(text="✓ " + t["fallback_done"], foreground="#1a7f37")
+        elif building and why != "tool":
+            self.result_text.config(text=t["shaders_console_wait"], foreground="#555")
+
     def fallback_ready(self):
-        data = os.path.join(self.out(), "data", "grapnel")
-        try:
-            env = open(os.path.join(data, "hookshot_env.txt"), encoding="utf-8").read()
-        except OSError:
-            return False
-        return os.path.isfile(os.path.join(data, "hookshot_shaders.bin")) and "\nHOOKSHOT_PS5_PREPARE=1" in env
+        import grapnel_core
+        return grapnel_core.console_prepare_ready(os.path.join(self.out(), "data", "grapnel"))
 
     def fallback(self):
-        """The console's own preparation (lot 82): the census and the pipelines' list beside the game, the setting that offers it"""
+        """The console's own preparation (lot 82) set up beside the game: the census and the pipelines' list, the setting that
+        offers it (grapnel_core.setup_console_prepare, which the build's step 7 runs by itself on a PC that does not prepare)"""
+        import grapnel_core
         t, out = self.t, self.out()
         src, data = os.path.join(out, "grapnel-work", "shaders"), os.path.join(out, "data", "grapnel")
-        names = ("hookshot_shaders.bin", "hookshot_pipeline_states_shipped.bin")
-        if not all(os.path.isfile(os.path.join(src, n)) for n in names) or not os.path.isdir(data):
+        census, states = grapnel_core.console_prep_names()
+        try:
+            r = grapnel_core.setup_console_prepare(data, os.path.join(src, census), os.path.join(src, states))
+        except grapnel_core.BuildError as e:
+            self.add_log("fallback: " + e.message)
             self.result_text.config(text=t["fallback_missing"], foreground="#b42318")
             return
-        for n in names:
-            shutil.copyfile(os.path.join(src, n), os.path.join(data, n))
-        env = os.path.join(data, "hookshot_env.txt")
-        text = open(env, encoding="utf-8").read()
-        if "\nHOOKSHOT_PS5_PREPARE=1" not in text:
-            with open(env, "a", encoding="utf-8", newline="\n") as f:
-                f.write("\n# (the builder's fallback: this PC could not prepare the shaders; the console offers its own preparation, "
-                        "about an hour)\nHOOKSHOT_PS5_PREPARE=1\n")
-        self.result_text.config(text=t["fallback_done"], foreground="#1a7f37")
-        self.add_log("fallback: %s and %s copied to %s, HOOKSHOT_PS5_PREPARE=1 in hookshot_env.txt" % (names[0], names[1], data))
+        self.result_text.config(text="✓ " + t["fallback_done"], foreground="#1a7f37")
+        self.add_log("fallback: %s and %s copied to %s, HOOKSHOT_PS5_PREPARE=1 in hookshot_env.txt%s"
+                     % (r["files"][0], r["files"][1], data, "" if r["setting_added"] else " (there already)"))
+        self.show(self.page)   # (the page as it now is: no button)
 
     def page_console(self):
         """Step 6: the title sent to the console over FTP (grapnel_send.py: the saves to this PC first, a confirmation before
@@ -1996,6 +2067,11 @@ class Assistant:
             return self.update_next()
         if rc == 0 and self.result:
             b = built(self.out())
+            if (b.get("console") or {}).get("why") == "illegal-instruction":   # (the PC's preparation stopped on an instruction
+                self.can_prepare = False                                          # its processor does not have: the console's now)
+            if PAGES[self.page] == "shaders" and not self.can_prepare:
+                self.show(self.page)   # (what the build set up for the console, or the fallback button)
+                return self.update_next()
             if PAGES[self.page] == "build":
                 self.show_built(b)
             elif PAGES[self.page] == "shaders" and b.get("shaders") and hasattr(self, "result_text"):
@@ -2004,8 +2080,6 @@ class Assistant:
                     self.left_text.config(text="")
                 self.result_text.config(text=t["shaders_done"].format(entries=b["shaders"].get("entries")), foreground="#1a7f37")
             self.update_next()
-            if PAGES[self.page] == "build" and not self.can_prepare:
-                pass
             return
         err = self.last_error or {}
         code = err.get("code")
@@ -2044,6 +2118,8 @@ class Assistant:
         total, _ = memory_gb()
         lines = ["Grapnel builder report", "system: %s %s (%s), %s processors, memory %.1f GB" % (
             platform.system(), platform.release(), platform.version(), os.cpu_count(), total or 0)]
+        lines.append("processor: %s, x86-64-v3 %s (%s)" % (self.cpu.get("name") or "?", "yes" if self.cpu["v3"] else "no",
+                                                           self.cpu["read"]))
         version = os.path.join(ROOT, "VERSION")
         if os.path.isfile(version):
             lines.append("builder: " + open(version, encoding="utf-8").read().strip())
@@ -2058,6 +2134,8 @@ class Assistant:
             for s in m.get("steps", []):
                 lines.append("  %-45s %6d s" % (s["step"], s["seconds"]))
             lines.append("llvm: %s; toolchain: %s; prepared: %s" % (m.get("llvm"), m.get("toolchain"), m.get("prepared")))
+            if m.get("console_prepare"):
+                lines.append("the console prepares the shaders: %s" % m["console_prepare"].get("why"))
         except (OSError, ValueError, KeyError):
             pass
         found = (self.nup_state[3].get("game_files") if self.nup_state else None) or {}
